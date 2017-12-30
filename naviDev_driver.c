@@ -116,6 +116,9 @@
 #define DEVICE_NAME_TTY         "naviDev.tty"           /* the name of the device using TTY --> /dev/naviDev.tty */
 #endif /* USE_TTY */
 
+#define USE_REQ_FOR_RESET       /* Uses one of the REQ signals to reset the HAT. If not defined the reset signal will be used. */
+                                /* You can't use the reset signal if you have a STLink attached to the HAT. */
+
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
 ///////////// INCLUDES
@@ -172,6 +175,9 @@
 /* defines the logic level for the request signals */
 #define REQ_LEVEL_ACTIVE        1
 #define REQ_LEVEL_INACTIVE      0
+
+#define RESET_LEVEL_ACTIVE          0
+#define RESET_LEVEL_INACTIVE       1
 
 
 #if defined(USE_STATIC_BUF_SIZE)
@@ -236,10 +242,11 @@ MODULE_PARM_DESC(DEBOUNCE_MS, "GPIO input debounce in ms");
 #define IOC_MAGIC 'N'
 //#define IOCTL_GET_STATISTICS    _IO(IOC_MAGIC,0)
 //#define IOCTL_RESET_HAT         _IO(IOC_MAGIC,1)
-#define IOCTL_GET_STATISTICS       _IO(IOC_MAGIC,0)
-#define IOCTL_GET_INFO             _IO(IOC_MAGIC,1)
-#define IOCTL_RESET_HAT            _IO(IOC_MAGIC,2)
-#define IOCTL_RESET_STATISTICS     _IO(IOC_MAGIC,3)
+#define IOCTL_GET_STATISTICS        _IO(IOC_MAGIC,0)
+#define IOCTL_GET_INFO              _IO(IOC_MAGIC,1)
+#define IOCTL_RESET_HAT             _IO(IOC_MAGIC,2)
+#define IOCTL_RESET_STATISTICS      _IO(IOC_MAGIC,3)
+#define IOCTL_GNSS                  _IO(IOC_MAGIC,4)
 
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
@@ -289,14 +296,43 @@ struct st_statistics{
     spinlock_t              spinlock;		        /* locks this structure */
 };
 
+#define NUM_RCV_CHANNELS            2
+
+typedef struct st_receiverConfig
+{
+    uint8_t         metaDataMask;                       
+    uint32_t        afcRange;                           
+    uint32_t        afcRangeDefault;                    
+    uint32_t        tcxoFreq;                           
+    uint32_t        channelFreq[NUM_RCV_CHANNELS];      
+};
+
+struct st_info_rcv{
+    struct st_receiverConfig    config;
+    uint8_t                     rng[2];
+};
+
+struct st_info_serial{
+    uint32_t    h;      /* bits 95...64 */
+    uint32_t    m;      /* bits 63...32 */
+    uint32_t    l;      /* bits 31...0 */
+};
+
 struct st_info{
-    uint8_t     mode;
-    uint8_t     hwId[16];
-    uint8_t     hwVer[8];
-    uint8_t     bootVer[22];
-    uint8_t     appVer[22];
-    uint32_t    functionality;
+    uint8_t                     mode;
+    uint8_t                     hwId[16];
+    uint8_t                     hwVer[8];
+    uint8_t                     bootVer[22];
+    uint8_t                     appVer[22];
+    uint32_t                    functionality;
+    struct st_info_serial       serial;
+    struct st_info_rcv          rcv[2];
     bool        valid;
+    spinlock_t  spinlock;
+};
+
+struct st_config{
+    uint8_t     gnssEnabled;
     spinlock_t  spinlock;
 };
 #endif /* USE_STATISTICS */
@@ -340,6 +376,7 @@ static struct class             *naviDev_stat_class;
 static struct device            *naviDev_stat_dev;
 static struct st_statistics     statistics;
 static struct st_info           info;
+static struct st_config         config;
 #endif /* USE_STATISTICS */
 
 
@@ -591,10 +628,17 @@ void naviDev_resetHAT(uint32_t ms)
     
     spin_lock_irq(&naviDev_spi->spinlock);
     /* reset the HAT microcontroller */
-    gpio_set_value(naviDev_spi->req_gpio[1].gpio, REQ_LEVEL_INACTIVE);
+#if defined(USE_REQ_FOR_RESET)    
+    gpio_set_value(naviDev_spi->req_gpio[0].gpio, REQ_LEVEL_INACTIVE);
     gpio_set_value(naviDev_spi->req_gpio[0].gpio, REQ_LEVEL_ACTIVE);
     mdelay(ms);
     gpio_set_value(naviDev_spi->req_gpio[0].gpio, REQ_LEVEL_INACTIVE);
+#else
+    gpio_set_value(naviDev_spi->reset_gpio.gpio, RESET_LEVEL_INACTIVE);
+    gpio_set_value(naviDev_spi->reset_gpio.gpio, RESET_LEVEL_ACTIVE);
+    mdelay(ms);
+    gpio_set_value(naviDev_spi->reset_gpio.gpio, RESET_LEVEL_INACTIVE);
+#endif /* !USE_REQ_FOR_RESET */       
     spin_unlock_irq(&naviDev_spi->spinlock);
 }
 
@@ -649,6 +693,12 @@ static long naviDev_stat_ioctl(struct file *filp, unsigned int cmd, unsigned lon
             spin_unlock_irq(&info.spinlock);
             rc = copy_to_user((void*)arg, dat, sizeof(struct st_info));
             size = sizeof(struct st_info);
+            break;
+        case IOCTL_GNSS:
+            rc = copy_from_user(dat, (void*)arg, sizeof(uint8_t));
+            spin_lock_irq(&config.spinlock);
+            config.gnssEnabled = dat[0];
+            spin_unlock_irq(&config.spinlock);
             break;
         default:
             if(DEBUG_LEVEL >= LEVEL_CRITICAL)
@@ -814,6 +864,8 @@ void naviDev_processReqData(void)
     uint8_t *msg;
     uint32_t headerCnt = 0;
     uint16_t crc;
+    bool processData = false;
+    uint32_t posPayload = 0;
 #if defined(USE_TTY)   
     unsigned int k = 0; 
     struct st_naviDevSpi_serial *serial = NULL;
@@ -902,7 +954,7 @@ void naviDev_processReqData(void)
         {
             /* error handling */
             if(DEBUG_LEVEL >= LEVEL_WARNING && !headerCnt)
-                pr_err("%s - HEADER_find(...) failed\n", __func__);
+                pr_err("%s - HEADER_find(...) failed - %u\n", __func__, headerCnt);
             goto naviDev_processReqData_exit;
         }
         
@@ -967,6 +1019,7 @@ void naviDev_processReqData(void)
 #if defined(USE_STATISTICS)             
             if(!info.valid)
             {
+                posPayload = 0;
                 /* the response header is stored in ASCII HEX format in the receive buffer, so we need to multiply by 2 (sizeof(response_t) * 2) to 
                    get the index to the payload */ 
                 memcpy(&info.mode, (uint8_t*)&naviDev_spi->rxBuf[headerPos + HEADER_size() + sizeof(response_t) * 2 + offsetof(struct st_info, mode)], 
@@ -979,7 +1032,49 @@ void naviDev_processReqData(void)
                         DIM_ELEMENT(struct st_info, bootVer));
                 memcpy(info.appVer, (uint8_t*)&naviDev_spi->rxBuf[headerPos + HEADER_size() + sizeof(response_t) * 2 + offsetof(struct st_info, appVer)],
                         DIM_ELEMENT(struct st_info, appVer));
-                info.functionality = HEADER_asciiHexToUint32_t((uint8_t*)&naviDev_spi->rxBuf[headerPos + HEADER_size() + sizeof(response_t) * 2 + offsetof(struct st_info, functionality)]);
+                posPayload = sizeof(response_t) * 2 + offsetof(struct st_info, appVer) + DIM_ELEMENT(struct st_info, appVer);                       
+                info.functionality = HEADER_asciiHexToUint32_t((uint8_t*)&naviDev_spi->rxBuf[headerPos + HEADER_size() + posPayload]);
+                posPayload += DIM_ELEMENT(struct st_info, functionality) * 2;
+                info.serial.h = HEADER_asciiHexToUint32_t((uint8_t*)&naviDev_spi->rxBuf[headerPos + HEADER_size() + posPayload]);
+                posPayload += DIM_ELEMENT(struct st_info_serial, h) * 2;
+                info.serial.m = HEADER_asciiHexToUint32_t((uint8_t*)&naviDev_spi->rxBuf[headerPos + HEADER_size() + posPayload]);
+                posPayload += DIM_ELEMENT(struct st_info_serial, m) * 2;
+                info.serial.l = HEADER_asciiHexToUint32_t((uint8_t*)&naviDev_spi->rxBuf[headerPos + HEADER_size() + posPayload]);
+                posPayload += DIM_ELEMENT(struct st_info_serial, l) * 2;
+                info.rcv[0].config.channelFreq[0] = HEADER_asciiHexToUint32_t((uint8_t*)&naviDev_spi->rxBuf[headerPos + HEADER_size() + posPayload]);
+                posPayload += DIM_ELEMENT(struct st_receiverConfig, channelFreq[0]) * 2;
+                info.rcv[0].config.channelFreq[1] = HEADER_asciiHexToUint32_t((uint8_t*)&naviDev_spi->rxBuf[headerPos + HEADER_size() + posPayload]);
+                posPayload += DIM_ELEMENT(struct st_receiverConfig, channelFreq[1]) * 2;
+                info.rcv[0].config.metaDataMask = HEADER_asciiHexToUint8_t((uint8_t*)&naviDev_spi->rxBuf[headerPos + HEADER_size() + posPayload]);
+                posPayload += DIM_ELEMENT(struct st_receiverConfig, metaDataMask) * 2;
+                info.rcv[0].config.afcRange = HEADER_asciiHexToUint32_t((uint8_t*)&naviDev_spi->rxBuf[headerPos + HEADER_size() + posPayload]);
+                posPayload += DIM_ELEMENT(struct st_receiverConfig, afcRange) * 2;
+                info.rcv[0].config.afcRangeDefault = HEADER_asciiHexToUint32_t((uint8_t*)&naviDev_spi->rxBuf[headerPos + HEADER_size() + posPayload]);
+                posPayload += DIM_ELEMENT(struct st_receiverConfig, afcRangeDefault) * 2;
+                info.rcv[0].config.tcxoFreq = HEADER_asciiHexToUint32_t((uint8_t*)&naviDev_spi->rxBuf[headerPos + HEADER_size() + posPayload]);
+                posPayload += DIM_ELEMENT(struct st_receiverConfig, tcxoFreq) * 2;
+                info.rcv[0].rng[0] = HEADER_asciiHexToUint8_t((uint8_t*)&naviDev_spi->rxBuf[headerPos + HEADER_size() + posPayload]);
+                posPayload += DIM_ELEMENT(struct st_info_rcv, rng[0]) * 2;
+                info.rcv[0].rng[1] = HEADER_asciiHexToUint8_t((uint8_t*)&naviDev_spi->rxBuf[headerPos + HEADER_size() + posPayload]);
+                posPayload += DIM_ELEMENT(struct st_info_rcv, rng[1]) * 2;
+                info.rcv[1].config.channelFreq[0] = HEADER_asciiHexToUint32_t((uint8_t*)&naviDev_spi->rxBuf[headerPos + HEADER_size() + posPayload]);
+                posPayload += DIM_ELEMENT(struct st_receiverConfig, channelFreq[0]) * 2;
+                info.rcv[1].config.channelFreq[1] = HEADER_asciiHexToUint32_t((uint8_t*)&naviDev_spi->rxBuf[headerPos + HEADER_size() + posPayload]);
+                posPayload += DIM_ELEMENT(struct st_receiverConfig, channelFreq[1]) * 2;
+                info.rcv[1].config.metaDataMask = HEADER_asciiHexToUint8_t((uint8_t*)&naviDev_spi->rxBuf[headerPos + HEADER_size() + posPayload]);
+                posPayload += DIM_ELEMENT(struct st_receiverConfig, metaDataMask) * 2;
+                info.rcv[1].config.afcRange = HEADER_asciiHexToUint32_t((uint8_t*)&naviDev_spi->rxBuf[headerPos + HEADER_size() + posPayload]);
+                posPayload += DIM_ELEMENT(struct st_receiverConfig, afcRange) * 2;
+                info.rcv[1].config.afcRangeDefault = HEADER_asciiHexToUint32_t((uint8_t*)&naviDev_spi->rxBuf[headerPos + HEADER_size() + posPayload]);
+                posPayload += DIM_ELEMENT(struct st_receiverConfig, afcRangeDefault) * 2;
+                info.rcv[1].config.tcxoFreq = HEADER_asciiHexToUint32_t((uint8_t*)&naviDev_spi->rxBuf[headerPos + HEADER_size() + posPayload]);
+                posPayload += DIM_ELEMENT(struct st_receiverConfig, tcxoFreq) * 2;
+                info.rcv[1].rng[0] = HEADER_asciiHexToUint8_t((uint8_t*)&naviDev_spi->rxBuf[headerPos + HEADER_size() + posPayload]);
+                posPayload += DIM_ELEMENT(struct st_info_rcv, rng[0]) * 2;
+                info.rcv[1].rng[1] = HEADER_asciiHexToUint8_t((uint8_t*)&naviDev_spi->rxBuf[headerPos + HEADER_size() + posPayload]);
+                posPayload += DIM_ELEMENT(struct st_info_rcv, rng[1]) * 2;
+                
+                
                 info.valid = true;
             }
 #endif /* USE_STATISTICS */            
@@ -1008,6 +1103,26 @@ void naviDev_processReqData(void)
             }
         }
         
+        processData = false;
+        if(header.payloadLen > 3)
+        {
+            spin_lock_irq(&config.spinlock);
+            if(naviDev_spi->rxBuf[headerPos + HEADER_size() + 0] == '$' && \
+               naviDev_spi->rxBuf[headerPos + HEADER_size() + 1] == 'G' && \
+               (naviDev_spi->rxBuf[headerPos + HEADER_size() + 2] == 'N' || \
+                naviDev_spi->rxBuf[headerPos + HEADER_size() + 2] == 'P') &&\
+                !config.gnssEnabled)
+            {
+                
+            }
+            else
+            {
+                processData = true;
+            }
+            spin_unlock_irq(&config.spinlock);
+        }
+        
+        
         /* we process the data further only, if the device specified in DEVICE_NAME_SPI is opened at all, otherwise data will
            be dropped */
         if(naviDev_spi->opened)
@@ -1031,7 +1146,7 @@ void naviDev_processReqData(void)
 #endif /* USE_STATISTICS */                
             }
 
-            if(!fifoFull)
+            if(!fifoFull && processData)
             {
                 /* append the new data to the FIFO */
                 memcpy(&rxFifo.data[rxFifo.cnt], &naviDev_spi->rxBuf[headerPos + HEADER_size()], header.payloadLen); 
@@ -1055,7 +1170,7 @@ void naviDev_processReqData(void)
         {
             /* we need to check if the tty/serial device is already initialized and opened, because this function will probably
                be executed earlier */
-            if(serial->initialized && serial->opened)
+            if(serial->initialized && serial->opened && processData)
             {
                 tty = serial->tty;
              	port = tty->port;
@@ -1335,8 +1450,8 @@ include/linux/of.h
         naviDev_spi->req_gpio[i].nr = i;
         
         gpio_request(naviDev_spi->req_gpio[i].gpio, naviDev_spi->req_gpio[i].name);
-		gpio_direction_output(naviDev_spi->req_gpio[i].gpio, naviDev_spi->req_gpio[i].flags);
-        gpio_export(naviDev_spi->req_gpio[i].gpio, false);         
+		gpio_direction_output(naviDev_spi->req_gpio[i].gpio, !naviDev_spi->req_gpio[i].flags);
+        gpio_export(naviDev_spi->req_gpio[i].gpio, false); 
         
         if(DEBUG_LEVEL >= LEVEL_INFO)
         { 
@@ -1358,7 +1473,7 @@ include/linux/of.h
     naviDev_spi->boot_gpio.irq = -1;
     
     gpio_request(naviDev_spi->boot_gpio.gpio, naviDev_spi->boot_gpio.name);
-	gpio_direction_output(naviDev_spi->boot_gpio.gpio, naviDev_spi->boot_gpio.flags);
+	gpio_direction_output(naviDev_spi->boot_gpio.gpio, !naviDev_spi->boot_gpio.flags);
     gpio_export(naviDev_spi->boot_gpio.gpio, false);         
     
     if(DEBUG_LEVEL >= LEVEL_INFO)
@@ -1378,11 +1493,12 @@ include/linux/of.h
     naviDev_spi->reset_gpio.name = of_get_property(resetNode, "pe,name", &size);
     naviDev_spi->reset_gpio.irq = -1;
     
-    /* TODO: uncomment if you want to use reset signal
+    /* TODO: uncomment if you want to use reset signal */
+#if !defined(USE_REQ_FOR_RESET)    
     gpio_request(naviDev_spi->reset_gpio.gpio, naviDev_spi->reset_gpio.name);
 	gpio_direction_output(naviDev_spi->reset_gpio.gpio, naviDev_spi->reset_gpio.flags);
     gpio_export(naviDev_spi->reset_gpio.gpio, false);         
-    */
+#endif /* !USE_REQ_FOR_RESET */    
     
      
     if(DEBUG_LEVEL >= LEVEL_INFO)
@@ -1905,6 +2021,7 @@ static int __init naviDev_init(void)
 #if defined(USE_STATISTICS)    
     spin_lock_init(&statistics.spinlock);
     spin_lock_init(&info.spinlock);
+    spin_lock_init(&config.spinlock);
 #endif /* USE_STATISTICS */    
 #if defined(USE_TTY)    
     mutex_init(&naviDev_serial->lock);
