@@ -42,7 +42,8 @@ typedef enum
 typedef enum
 {
     CMD_INFO                = 1,
-}headerCmdCategoryRequest_t;
+    CMD_CONFIG              = 4,
+}headerCmd_t;
 
 typedef enum
 {
