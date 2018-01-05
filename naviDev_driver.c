@@ -1151,7 +1151,7 @@ void naviDev_processReqData(void)
                     posPayload += DIM_ELEMENT(struct st_simulator, enabled) * 2;
                     info.simulator.interval = HEADER_asciiHexToUint32_t((uint8_t*)&naviDev_spi->rxBuf[headerPos + HEADER_size() + posPayload]);
                     posPayload += DIM_ELEMENT(struct st_simulator, interval) * 2;
-                    for(k < 0; k < NUM_RCV_CHANNELS; k++)
+                    for(k = 0; k < NUM_RCV_CHANNELS; k++)
                     {
                         info.simulator.mmsi[k] = HEADER_asciiHexToUint32_t((uint8_t*)&naviDev_spi->rxBuf[headerPos + HEADER_size() + posPayload]);
                         posPayload += DIM_ELEMENT(struct st_simulator, mmsi[k]) * 2;
