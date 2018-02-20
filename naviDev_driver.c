@@ -137,8 +137,11 @@
 #define DEVICE_NAME_TTY         "naviDev.tty"           /* the name of the device using the TTY interface --> /dev/naviDev.tty */
 #endif /* USE_TTY */
 
-#define USE_REQ_FOR_RESET               /* Uses one of the REQ signals to reset the HAT. If not defined the reset signal will be used.
+/*#define USE_REQ_FOR_RESET*/               /* Uses one of the REQ signals to reset the HAT. If not defined the reset signal will be used.
                                           You can't use the reset signal if you have a STLink attached to the HAT. */
+
+#define USE_KEEP_ALIVE                  /* If enabled, the driver checks if a keep alive message is received from the HAT periodically.
+                                           If the keep alive is missing, the driver resets the HAT. */
 
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
@@ -164,6 +167,7 @@
 #include <linux/jiffies.h>
 #include <linux/spi/spi.h>
 #include <linux/interrupt.h>
+#include <linux/timer.h>
 #include <asm/uaccess.h>  
 #include <linux/moduleparam.h>
 #include <linux/delay.h>
@@ -239,8 +243,17 @@ MODULE_PARM_DESC(DEBUG_LEVEL, "Defines the level of debugging. \
 /* Defines the debounce timeout for the GPIOs. This is only required, if the GPIOs are connected
    to push buttons. This is a leftover from the evaluation phase. */                              
 long DEBOUNCE_MS = 0;
-module_param(DEBOUNCE_MS, long, 0664);
+module_param(DEBOUNCE_MS, long, 0644);
 MODULE_PARM_DESC(DEBOUNCE_MS, "GPIO input debounce time in ms");  
+
+long KEEP_ALIVE_TIMEOUT_LONG_MS = 2000;
+module_param(KEEP_ALIVE_TIMEOUT_LONG_MS, long, 0644);
+MODULE_PARM_DESC(KEEP_ALIVE_TIMEOUT_LONG_MS, "Keep alive timeout (long value) in sec");  
+
+long KEEP_ALIVE_TIMEOUT_SHORT_MS = 4000;
+module_param(KEEP_ALIVE_TIMEOUT_SHORT_MS, long, 0644);
+MODULE_PARM_DESC(KEEP_ALIVE_TIMEOUT_SHORT_MS, "Keep alive timeout (short value) in sec");  
+
 
 /* error codes */
 #define ERR_NO                  0        
@@ -256,6 +269,9 @@ MODULE_PARM_DESC(DEBOUNCE_MS, "GPIO input debounce time in ms");
 #define IOCTL_RESET_STATISTICS      _IO(IOC_MAGIC,3)
 #define IOCTL_GNSS                  _IO(IOC_MAGIC,4)
 #define IOCTL_CONFIG                _IO(IOC_MAGIC,5)
+#define IOCTL_ID_EEPROM             _IO(IOC_MAGIC,6)
+
+#define KEEP_ALIVE_TIMEOUT(x)           (jiffies + msecs_to_jiffies(x))
 
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
@@ -296,6 +312,7 @@ struct st_statistics{
     uint64_t                fifoBytesProcessed;     /* total number of bytes passed to the user via read(...) */
     uint64_t                payloadCrcErrors;       /* incremented whenever a payload with wrong CRC is received via the SPI interface */
     uint64_t                headerCrcErrors;        /* incremented whenever a header with wrong CRC is received via the SPI interface */
+    uint64_t                keepAliveErrors;        /* incremented whenever a keep alive timeout occurs */
     spinlock_t              spinlock;		        /* locks this structure */
 };
 #endif /* USE_STATISTICS */
@@ -323,7 +340,7 @@ struct st_info_serial{
 
 struct st_simulator
 {
-    uint32_t mmsi[NUM_RCV_CHANNELS];               /* MMSI used for the AIS simulator */
+    uint32_t mmsi[NUM_RCV_CHANNELS];                /* MMSI used for the AIS simulator */
     uint32_t enabled;                               /* 1...simulator enabled, 0...simulator disabled */
     uint32_t interval;                              /* interval used for the AIS simulator */
 };
@@ -339,6 +356,7 @@ struct st_info{
     struct st_info_serial       serial;             /* unique serial number of the HAT */
     struct st_info_rcv          rcv[NUM_RCV];       /* AIS receiver related information/configuration */
     struct st_simulator         simulator;          /* simulator related information/configuration */
+    uint8_t                     wpEEPROM;           /* write protection of the ID EEPROM, 1...enabled, 0...disabled */
     bool        valid;                              /* true if valid, else false */
     spinlock_t  spinlock;                           /* locks this structure */
 };
@@ -346,6 +364,7 @@ struct st_info{
 struct st_configHAT{    
     struct st_receiverConfig    rcv[2];             /* AIS receiver configuration */
     struct st_simulator         simulator;          /* simulator configuration */
+    uint8_t                     wpEEPROM;           /* write protection of the ID EEPROM, 1...enabled, 0...disabled */
     spinlock_t  spinlock;                           /* locks this structure */
 };
 
@@ -412,6 +431,7 @@ const struct st_configHAT configHATdefault = {
     .simulator.interval = 1000,
     .simulator.mmsi[0] = 807977831,
     .simulator.mmsi[1] = 807977832,
+    .wpEEPROM = 1,
 };
 
 DEFINE_MUTEX(mutex_adcVal);
@@ -446,6 +466,17 @@ static struct device *naviDev_tty_dev;
 #define NAVIDEV_TTY_MAJOR		240
 #endif /* USE_TTY */
 
+#if defined(USE_KEEP_ALIVE)
+static atomic_t killKeepAlive = ATOMIC_INIT(0);
+static struct timer_list timerKeepAlive;
+spinlock_t timerKeepAlive_spinlock;
+static DECLARE_COMPLETION(on_exitKeepAlive);
+static struct workqueue_struct *wq = NULL;
+static void keepAlive_queueFunc(struct work_struct *work);
+static DECLARE_WORK(work_object, keepAlive_queueFunc);
+#endif /* USE_KEEP_ALIVE */
+
+
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
 ///////////// FUNCTION PROTOTYPES
@@ -454,6 +485,7 @@ static struct device *naviDev_tty_dev;
 
 static int naviDev_transmitSpiData(struct st_naviDevSpi *dev, char* data, unsigned int len, bool devBuf);
 static int naviDev_receiveSpiData(struct st_naviDevSpi *dev, size_t len);
+static void naviDev_resetHAT(uint32_t ms);
 
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
@@ -616,25 +648,33 @@ open_failed:
 	return status;		
 }
 
-void naviDev_resetHAT(uint32_t ms)
+static void naviDev_resetHAT(uint32_t ms)
 {
+    unsigned long iflags;
+    
     if(DEBUG_LEVEL >= LEVEL_DEBUG)
         pr_info("%s\n", __func__);
     
-    spin_lock_irq(&naviDev_spi->spinlock);
+    spin_lock_irqsave(&naviDev_spi->spinlock, iflags);
     /* reset the HAT microcontroller */
 #if defined(USE_REQ_FOR_RESET)    
     gpio_set_value(naviDev_spi->req_gpio[0].gpio, REQ_LEVEL_INACTIVE);
     gpio_set_value(naviDev_spi->req_gpio[0].gpio, REQ_LEVEL_ACTIVE);
-    mdelay(ms);
+    spin_unlock_irqrestore(&naviDev_spi->spinlock, iflags);
+    if(ms)
+        mdelay(ms);
+    spin_lock_irqsave(&naviDev_spi->spinlock, iflags);
     gpio_set_value(naviDev_spi->req_gpio[0].gpio, REQ_LEVEL_INACTIVE);
 #else
     gpio_set_value(naviDev_spi->reset_gpio.gpio, RESET_LEVEL_INACTIVE);
     gpio_set_value(naviDev_spi->reset_gpio.gpio, RESET_LEVEL_ACTIVE);
-    mdelay(ms);
+    spin_unlock_irqrestore(&naviDev_spi->spinlock, iflags);
+    if(ms)
+        mdelay(ms);
+    spin_lock_irqsave(&naviDev_spi->spinlock, iflags);
     gpio_set_value(naviDev_spi->reset_gpio.gpio, RESET_LEVEL_INACTIVE);
 #endif /* !USE_REQ_FOR_RESET */       
-    spin_unlock_irq(&naviDev_spi->spinlock);
+    spin_unlock_irqrestore(&naviDev_spi->spinlock, iflags);
 }
 
 #if defined(USE_STATISTICS)
@@ -650,6 +690,7 @@ void naviDev_resetStatistics(struct st_statistics *stat)
     stat->fifoBytesProcessed = 0;
     stat->payloadCrcErrors = 0;
     stat->headerCrcErrors = 0;
+    stat->keepAliveErrors = 0;
     spin_unlock_irq(&stat->spinlock);
 }
 #endif /* USE_STATISTICS */
@@ -723,11 +764,21 @@ static long naviDev_ctrl_ioctl(struct file *filp, unsigned int cmd, unsigned lon
                 pr_info("\t\tAFC range [Hz]:\t\t\t %u\n", configHAT.rcv[1].afcRange);
                 pr_info("\t\tTCXO frequency [Hz]:\t\t %u\n", configHAT.rcv[1].tcxoFreq);  
                 pr_info("%s - simulator\n", __func__);
-                pr_info("\t\tenabled:\t\t %u\n", configHAT.simulator.enabled);  
-                pr_info("\t\tinterval:\t\t %u\n", configHAT.simulator.interval);  
-                pr_info("\t\tmmsi:\t\t %09u %09u\n", configHAT.simulator.mmsi[0], configHAT.simulator.mmsi[1]);  
+                pr_info("\t\tenabled:\t\t\t %u\n", configHAT.simulator.enabled);  
+                pr_info("\t\tinterval:\t\t\t %u\n", configHAT.simulator.interval);  
+                pr_info("\t\tmmsi:\t\t\t %09u %09u\n", configHAT.simulator.mmsi[0], configHAT.simulator.mmsi[1]);  
+                pr_info("%s - misc\n", __func__);
+                pr_info("\t\twrite protection ID EEPROM:\t\t %u\n", configHAT.wpEEPROM);  
             }          
             break;
+        case IOCTL_ID_EEPROM:
+            rc = copy_from_user(dat, (void*)arg, sizeof(uint8_t));
+            spin_lock_irq(&config.spinlock);
+            configHAT.wpEEPROM = dat[0];
+            spin_unlock_irq(&config.spinlock);
+            size = sizeof(uint8_t);
+            break;
+                    
         default:
             if(DEBUG_LEVEL >= LEVEL_CRITICAL)
             {
@@ -871,8 +922,54 @@ static int FUNC_NOT_USED naviDev_receiveSpiData(struct st_naviDevSpi *dev, size_
 	return status;
 }
 
+#if defined(USE_KEEP_ALIVE)
+static void keepAlive_queueFunc(struct work_struct *work)
+{
+    if(!naviDev_spi)
+        return;
+    
+    if(!naviDev_spi->initialized)
+        return;
+    
+    if(DEBUG_LEVEL >= LEVEL_WARNING)
+        pr_info("%s - reseting HAT\n", __func__);        
+        
+    naviDev_resetHAT(10);
+}
+
+static void naviDev_keepAlive(unsigned long dat)
+{
+    unsigned long iflags;
+    
+    if(DEBUG_LEVEL >= LEVEL_WARNING)
+        pr_info("%s\n", __func__);    
+    
+    if(atomic_read(&killKeepAlive))
+        complete(&on_exitKeepAlive);
+    else
+    {
+        
+#if defined(USE_STATISTICS)            
+        spin_lock_irqsave(&statistics.spinlock, iflags);
+        statistics.keepAliveErrors++;
+        spin_unlock_irqrestore(&statistics.spinlock, iflags);
+#endif /* USE_STATISTICS */ 
+        
+        spin_lock_irqsave(&timerKeepAlive_spinlock, iflags);
+        //add_timer(&timerKeepAlive);        
+        mod_timer(&timerKeepAlive, KEEP_ALIVE_TIMEOUT(KEEP_ALIVE_TIMEOUT_LONG_MS));
+        spin_unlock_irqrestore(&timerKeepAlive_spinlock, iflags);
+            
+        queue_work(wq, &work_object);      
+    }    
+}
+#endif /* USE_KEEP_ALIVE */
+
 void naviDev_processReqData(void)
 {
+#if defined(USE_KEEP_ALIVE)    
+    unsigned long iflags;
+#endif /* USE_KEEP_ALIVE */    
     uint32_t headerPos = 0;
     uint32_t lastHeaderPos = 0;
     header_t header;
@@ -938,6 +1035,8 @@ void naviDev_processReqData(void)
         HEADER_uint32_tToAsciiHex(configHAT.simulator.mmsi[k], &naviDev_spi->txBuf[posInTxBuf + HEADER_size() + posPayload], NOT_NULL_TERMINATED);
         posPayload += DIM_ELEMENT(struct st_simulator, mmsi[k]) * 2;    
     }
+    HEADER_uint8_tToAsciiHex(configHAT.wpEEPROM, &naviDev_spi->txBuf[posInTxBuf + HEADER_size() + posPayload], NOT_NULL_TERMINATED);
+    posPayload += DIM_ELEMENT(struct st_configHAT, wpEEPROM) * 2;  
     spin_unlock_irq(&configHAT.spinlock);
     
     /* fill the header for the payload with default settings */
@@ -1156,7 +1255,8 @@ void naviDev_processReqData(void)
                         info.simulator.mmsi[k] = HEADER_asciiHexToUint32_t((uint8_t*)&naviDev_spi->rxBuf[headerPos + HEADER_size() + posPayload]);
                         posPayload += DIM_ELEMENT(struct st_simulator, mmsi[k]) * 2;
                     }
-                    
+                    info.wpEEPROM = HEADER_asciiHexToUint8_t((uint8_t*)&naviDev_spi->rxBuf[headerPos + HEADER_size() + posPayload]);
+                    posPayload += DIM_ELEMENT(struct st_info, wpEEPROM) * 2;
                     info.valid = true;
                     
                     spin_unlock_irq(&info.spinlock);
@@ -1172,6 +1272,12 @@ void naviDev_processReqData(void)
         statistics.totalRxPayloadBytes += header.payloadLen;
         spin_unlock_irq(&statistics.spinlock);
 #endif /* USE_STATISTICS */    
+
+#if defined(USE_KEEP_ALIVE)
+        spin_lock_irqsave(&timerKeepAlive_spinlock, iflags);
+        mod_timer(&timerKeepAlive, KEEP_ALIVE_TIMEOUT(KEEP_ALIVE_TIMEOUT_SHORT_MS));
+        spin_unlock_irqrestore(&timerKeepAlive_spinlock, iflags);
+#endif /* USE_KEEP_ALIVE */
         
         if(DEBUG_LEVEL >= LEVEL_DEBUG)
         {
@@ -1593,8 +1699,10 @@ free_gpios:
     
     gpio_unexport(naviDev_spi->boot_gpio.gpio);
     gpio_free(naviDev_spi->boot_gpio.gpio); 
+#if !defined(USE_REQ_FOR_RESET)        
     gpio_unexport(naviDev_spi->reset_gpio.gpio);
     gpio_free(naviDev_spi->reset_gpio.gpio); 
+#endif /* USE_REQ_FOR_RESET */    
     
     for(k = 0; k <= i; k++)    
     {
@@ -2023,7 +2131,7 @@ static int __init naviDev_init(void)
     spin_lock_init(&statistics.spinlock);
 #endif /* USE_STATISTICS */     
     spin_lock_init(&info.spinlock);
-    config.gnssEnabled = 1;
+    config.gnssEnabled = 1;     /* the GNSS is enabled by default */
     spin_lock_init(&config.spinlock);
     
     memcpy(&configHAT, &configHATdefault, sizeof(struct st_configHAT));
@@ -2048,6 +2156,18 @@ static int __init naviDev_init(void)
     thread_id = kthread_create(naviDev_thread, NULL, "naviDev thread");
     wake_up_process(thread_id);
 #endif /* USE_THREAD */    
+
+#if defined(USE_KEEP_ALIVE)
+    wq = create_workqueue("KEEP ALIVE");
+    /* initialize a timer that is used to check communication to the nav.HAT */
+    spin_lock_init(&timerKeepAlive_spinlock);
+    init_timer(&timerKeepAlive);
+    timerKeepAlive.function = naviDev_keepAlive;
+    timerKeepAlive.data = 0;
+    timerKeepAlive.expires = KEEP_ALIVE_TIMEOUT(KEEP_ALIVE_TIMEOUT_LONG_MS);
+    add_timer(&timerKeepAlive);
+#endif /* USE_KEEP_ALIVE */
+
     return 0;
     
     /* to avoid compiler errors */
@@ -2108,6 +2228,9 @@ free_mem:
 static void __exit naviDev_exit(void)
 {
     int i = 0;
+#if defined(USE_KEEP_ALIVE)    
+    unsigned long iflags;
+#endif /* USE_KEEP_ALIVE */    
     
     if(DEBUG_LEVEL >= LEVEL_INFO)
         pr_info("%s\n", __func__);
@@ -2123,6 +2246,21 @@ static void __exit naviDev_exit(void)
     info.valid = false; 
     naviDev_serial->initialized = false;
     naviDev_serial->opened = false;
+    
+#if defined(USE_KEEP_ALIVE)
+    atomic_set(&killKeepAlive, 1);
+    spin_lock_irqsave(&timerKeepAlive_spinlock, iflags);
+    mod_timer(&timerKeepAlive, KEEP_ALIVE_TIMEOUT(1));
+    spin_unlock_irqrestore(&timerKeepAlive_spinlock, iflags);
+    wait_for_completion(&on_exitKeepAlive);
+    del_timer_sync(&timerKeepAlive);
+    
+    if(wq)
+	{
+	    flush_workqueue(wq);
+	    destroy_workqueue(wq);
+	}
+#endif /* USE_KEEP_ALIVE */    
     
     kill_pid(task_pid(thread_id), SIGTERM, 1);
     wait_for_completion(&on_exit);
@@ -2163,8 +2301,11 @@ static void __exit naviDev_exit(void)
     
     gpio_unexport(naviDev_spi->boot_gpio.gpio);
     gpio_free(naviDev_spi->boot_gpio.gpio); 
+
+#if !defined(USE_REQ_FOR_RESET)        
     gpio_unexport(naviDev_spi->reset_gpio.gpio);
     gpio_free(naviDev_spi->reset_gpio.gpio); 
+#endif /* USE_REQ_FOR_RESET */    
     
     for(i = 0; i < DIM(naviDev_spi->irq_gpio); i++)   
 	{

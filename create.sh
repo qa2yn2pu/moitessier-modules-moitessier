@@ -1,7 +1,8 @@
 #!/bin/bash
 
 kernelDir=/home/development/Desktop/Raspberry/kernel/linux
-targetDir=/tftpboot/rootfs/home/pi
+#kernelDir=/home/development/Desktop/Raspberry/kernel/kernel_openplotter
+targetDir=/tftpboot/rootfs/home/pi/naviDev
 
 make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- all KDIR=$kernelDir
 
