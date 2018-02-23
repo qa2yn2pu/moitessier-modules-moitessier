@@ -137,9 +137,6 @@
 #define DEVICE_NAME_TTY         "naviDev.tty"           /* the name of the device using the TTY interface --> /dev/naviDev.tty */
 #endif /* USE_TTY */
 
-/*#define USE_REQ_FOR_RESET*/               /* Uses one of the REQ signals to reset the HAT. If not defined the reset signal will be used.
-                                          You can't use the reset signal if you have a STLink attached to the HAT. */
-
 #define USE_KEEP_ALIVE                  /* If enabled, the driver checks if a keep alive message is received from the HAT periodically.
                                            If the keep alive is missing, the driver resets the HAT. */
 
@@ -253,6 +250,10 @@ MODULE_PARM_DESC(KEEP_ALIVE_TIMEOUT_LONG_MS, "Keep alive timeout (long value) in
 long KEEP_ALIVE_TIMEOUT_SHORT_MS = 4000;
 module_param(KEEP_ALIVE_TIMEOUT_SHORT_MS, long, 0644);
 MODULE_PARM_DESC(KEEP_ALIVE_TIMEOUT_SHORT_MS, "Keep alive timeout (short value) in sec");  
+
+int USE_REQ_FOR_RESET = 0;
+module_param(USE_REQ_FOR_RESET, int, 0444);
+MODULE_PARM_DESC(USE_REQ_FOR_RESET, "Set to 1, if the REQ signal should be used instead of the dedicated RESET signal to reset the HAT");  
 
 
 /* error codes */
@@ -656,24 +657,28 @@ static void naviDev_resetHAT(uint32_t ms)
         pr_info("%s\n", __func__);
     
     spin_lock_irqsave(&naviDev_spi->spinlock, iflags);
-    /* reset the HAT microcontroller */
-#if defined(USE_REQ_FOR_RESET)    
-    gpio_set_value(naviDev_spi->req_gpio[0].gpio, REQ_LEVEL_INACTIVE);
-    gpio_set_value(naviDev_spi->req_gpio[0].gpio, REQ_LEVEL_ACTIVE);
-    spin_unlock_irqrestore(&naviDev_spi->spinlock, iflags);
-    if(ms)
-        mdelay(ms);
-    spin_lock_irqsave(&naviDev_spi->spinlock, iflags);
-    gpio_set_value(naviDev_spi->req_gpio[0].gpio, REQ_LEVEL_INACTIVE);
-#else
-    gpio_set_value(naviDev_spi->reset_gpio.gpio, RESET_LEVEL_INACTIVE);
-    gpio_set_value(naviDev_spi->reset_gpio.gpio, RESET_LEVEL_ACTIVE);
-    spin_unlock_irqrestore(&naviDev_spi->spinlock, iflags);
-    if(ms)
-        mdelay(ms);
-    spin_lock_irqsave(&naviDev_spi->spinlock, iflags);
-    gpio_set_value(naviDev_spi->reset_gpio.gpio, RESET_LEVEL_INACTIVE);
-#endif /* !USE_REQ_FOR_RESET */       
+    /* reset the HAT microcontroller */    
+    if(USE_REQ_FOR_RESET)
+    {
+        gpio_set_value(naviDev_spi->req_gpio[0].gpio, REQ_LEVEL_INACTIVE);
+        gpio_set_value(naviDev_spi->req_gpio[0].gpio, REQ_LEVEL_ACTIVE);
+        spin_unlock_irqrestore(&naviDev_spi->spinlock, iflags);
+        if(ms)
+            mdelay(ms);
+        spin_lock_irqsave(&naviDev_spi->spinlock, iflags);
+        gpio_set_value(naviDev_spi->req_gpio[0].gpio, REQ_LEVEL_INACTIVE);
+    }
+    else
+    {
+        gpio_set_value(naviDev_spi->reset_gpio.gpio, RESET_LEVEL_INACTIVE);
+        gpio_set_value(naviDev_spi->reset_gpio.gpio, RESET_LEVEL_ACTIVE);
+        spin_unlock_irqrestore(&naviDev_spi->spinlock, iflags);
+        if(ms)
+            mdelay(ms);
+        spin_lock_irqsave(&naviDev_spi->spinlock, iflags);
+        gpio_set_value(naviDev_spi->reset_gpio.gpio, RESET_LEVEL_INACTIVE);
+    }
+
     spin_unlock_irqrestore(&naviDev_spi->spinlock, iflags);
 }
 
@@ -1616,12 +1621,16 @@ include/linux/of.h
 	naviDev_spi->reset_gpio.flags = (int)flags;
     naviDev_spi->reset_gpio.name = of_get_property(resetNode, "pe,name", &size);
     naviDev_spi->reset_gpio.irq = -1;
-    
-#if !defined(USE_REQ_FOR_RESET)    
     gpio_request(naviDev_spi->reset_gpio.gpio, naviDev_spi->reset_gpio.name);
-	gpio_direction_output(naviDev_spi->reset_gpio.gpio, naviDev_spi->reset_gpio.flags);
     gpio_export(naviDev_spi->reset_gpio.gpio, false);         
-#endif /* !USE_REQ_FOR_RESET */    
+	
+    if(USE_REQ_FOR_RESET)   
+    {
+        gpio_direction_input(naviDev_spi->reset_gpio.gpio);
+        //gpio_direction_output(naviDev_spi->reset_gpio.gpio, RESET_LEVEL_INACTIVE);
+    }
+    else
+        gpio_direction_output(naviDev_spi->reset_gpio.gpio, naviDev_spi->reset_gpio.flags);
     
     if(DEBUG_LEVEL >= LEVEL_INFO)
     { 
@@ -1698,11 +1707,9 @@ free_gpios:
     }
     
     gpio_unexport(naviDev_spi->boot_gpio.gpio);
-    gpio_free(naviDev_spi->boot_gpio.gpio); 
-#if !defined(USE_REQ_FOR_RESET)        
+    gpio_free(naviDev_spi->boot_gpio.gpio);         
     gpio_unexport(naviDev_spi->reset_gpio.gpio);
     gpio_free(naviDev_spi->reset_gpio.gpio); 
-#endif /* USE_REQ_FOR_RESET */    
     
     for(k = 0; k <= i; k++)    
     {
@@ -2301,11 +2308,9 @@ static void __exit naviDev_exit(void)
     
     gpio_unexport(naviDev_spi->boot_gpio.gpio);
     gpio_free(naviDev_spi->boot_gpio.gpio); 
-
-#if !defined(USE_REQ_FOR_RESET)        
+     
     gpio_unexport(naviDev_spi->reset_gpio.gpio);
     gpio_free(naviDev_spi->reset_gpio.gpio); 
-#endif /* USE_REQ_FOR_RESET */    
     
     for(i = 0; i < DIM(naviDev_spi->irq_gpio); i++)   
 	{
