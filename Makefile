@@ -1,5 +1,5 @@
-obj-m += naviDev.o
-naviDev-objs := naviDev_driver.o crc.o header.o
+obj-m += moitessier.o
+moitessier-objs := moitessier_driver.o crc.o header.o
 
 PWD := $(shell pwd)
 all:

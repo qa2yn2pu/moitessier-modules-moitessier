@@ -1,5 +1,5 @@
 /*
-    Linux device driver for the nav.HAT
+    Linux device driver for the Moitessier HAT
     Copyright (C) 2018  Thomas POMS <hwsw.development@gmail.com>
     
     This program is free software; you can redistribute it and/or
@@ -24,8 +24,8 @@
     
     (1)
     reading from the device using the SPI device file:
-    target> head -c 49 /dev/naviDev.spi
-    target> cat /dev/naviDev.spi
+    target> head -c 49 /dev/moitessier.spi
+    target> cat /dev/moitessier.spi
     
     (2)
     reading from the device using the SPI to PTS bridge:
@@ -39,11 +39,11 @@
     
     Open your navigation program (e.g OpenCPN) and define /dev/pts/6 (depending of socat output) as input interface and transfer data
     from the SPI device to the PTS device.
-    target> cat /dev/naviDev.spi > /dev/pts/5
+    target> cat /dev/moitessier.spi > /dev/pts/5
     
     (3)
     read from the device using the TTY device file:
-    target> cat /dev/naviDev.tty
+    target> cat /dev/moitessier.tty
     
     
     Compiling the device tree
@@ -55,8 +55,8 @@
     Required device tree entry in bcm2710-rpi-3-b.dts: 
         &spi0 {
             /delete-node/ spidev@0;
-            navidev0: navidev@0{
-        		compatible = "pe,navidev";
+            moitessier0: moitessier@0{
+        		compatible = "rooco,moitessier";
         		#address-cells = <1>;
         		#size-cells = <0>;
                 reg = <0>;
@@ -66,29 +66,29 @@
 
                 boot: boot{
                     gpios = <&gpio 17 GPIO_ACTIVE_LOW>;
-                    pe,name = "IMC BOOT";
-                    pe,direction = "output";
+                    rooco,name = "IMC BOOT";
+                    rooco,direction = "output";
                     status = "okay";   
                 };
 
                 reset: reset{
                     gpios = <&gpio 18 GPIO_ACTIVE_LOW>;
-                    pe,name = "IMC RESET";
-                    pe,direction = "output";
+                    rooco,name = "IMC RESET";
+                    rooco,direction = "output";
                     status = "okay";   
                 };
 
                 imc_req: imc_req{
                     gpios = <&gpio 24 GPIO_ACTIVE_LOW>, <&gpio 22 GPIO_ACTIVE_LOW>;
-                    pe,name = "IMC REQ";
-                    pe,direction = "output";
+                    rooco,name = "IMC REQ";
+                    rooco,direction = "output";
                     status = "okay";   
                 };
 
                 imc_irq: imc_irq{
                     gpios = <&gpio 23 GPIO_ACTIVE_LOW>, <&gpio 27 GPIO_ACTIVE_LOW>;
-                    pe,name = "IMC IRQ";
-                    pe,direction = "input";
+                    rooco,name = "IMC IRQ";
+                    rooco,direction = "input";
                     status = "okay";   
                 };
         	};
@@ -99,8 +99,8 @@
         ********************
         
         Makefile:
-        obj-m += naviDev.o
-        naviDev-objs := naviDev_driver.o crc.o header.o
+        obj-m += moitessier.o
+        moitessier-objs := moitessier_driver.o crc.o header.o
         PWD := $(shell pwd)
         all:
         	make -C $(KDIR) M=$(PWD) clean
@@ -122,7 +122,7 @@
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
 
-#define USE_TTY                         /* Enables the SPI to TTY bridge. Data can be read from either /dev/naviDev.spi or /dev/naviDev.tty. */
+#define USE_TTY                         /* Enables the SPI to TTY bridge. Data can be read from either /dev/moitessier.spi or /dev/moitessier.tty. */
 #define USE_THREAD                      /* Enables a kernel thread for reading data via SPI, otherwise data is read in a tasklet.
                                            Tasklet implementation not tested right now. */
 //#define USE_MSG_CNT_TTY               /* a message counter will be send on the tty interface */
@@ -131,10 +131,10 @@
 #define NUM_RCV_CHANNELS        2       /* number of channels per AIS receiver, this value should be 2 */
 #define NUM_RCV                 2       /* number of AIS receivers, this value should be 2 */
     
-#define DEVICE_NAME_SPI         "naviDev.spi"           /* the name of the device using the SPI interface --> /dev/naviDev.spi */
-#define DEVICE_NAME_CTRL        "naviDev.ctrl"          /* the name of the device to control this driver --> /dev/naviDev.ctrl */
+#define DEVICE_NAME_SPI         "moitessier.spi"           /* the name of the device using the SPI interface --> /dev/moitessier.spi */
+#define DEVICE_NAME_CTRL        "moitessier.ctrl"          /* the name of the device to control this driver --> /dev/moitessier.ctrl */
 #if defined(USE_TTY)
-#define DEVICE_NAME_TTY         "naviDev.tty"           /* the name of the device using the TTY interface --> /dev/naviDev.tty */
+#define DEVICE_NAME_TTY         "moitessier.tty"           /* the name of the device using the TTY interface --> /dev/moitessier.tty */
 #endif /* USE_TTY */
 
 #define USE_KEEP_ALIVE                  /* If enabled, the driver checks if a keep alive message is received from the HAT periodically.
@@ -291,7 +291,7 @@ struct ctrl_gpio{
     unsigned long jiffiesEvent;                 /* jiffies timestamp, set in the interrupt context related to the irq/gpio */
 };
 
-struct st_naviDevSpi{
+struct st_moitessierSpi{
 	struct spi_device	    *spi;               /* the SPI device used for this driver */
     unsigned char	        txBuf[BUF_SIZE];    /* tx buffer used for SPI transmissions */
 	unsigned char			rxBuf[BUF_SIZE];    /* rx buffer used for SPI receptions */
@@ -383,7 +383,7 @@ struct st_fifo{
 };
 
 #if defined(USE_TTY)
-struct st_naviDevSpi_serial {
+struct st_moitessierSpi_serial {
 	struct tty_struct	    *tty;		            /* pointer to the tty for this device */
 	struct mutex	        lock;		            /* locks this structure */
 	bool                    initialized;            /* is true if the device has been properly configured/initialized */
@@ -397,16 +397,16 @@ struct st_naviDevSpi_serial {
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
 
-struct st_naviDevSpi	        *naviDev_spi = NULL;
-static dev_t                    naviDev_spi_nr;
-static struct cdev              *naviDev_spi_object;
-static struct class             *naviDev_spi_class;
-static struct device            *naviDev_spi_dev;
+struct st_moitessierSpi	        *moitessier_spi = NULL;
+static dev_t                    moitessier_spi_nr;
+static struct cdev              *moitessier_spi_object;
+static struct class             *moitessier_spi_class;
+static struct device            *moitessier_spi_dev;
 
-static dev_t                    naviDev_ctrl_nr;
-static struct cdev              *naviDev_ctrl_object;
-static struct class             *naviDev_ctrl_class;
-static struct device            *naviDev_ctrl_dev;
+static dev_t                    moitessier_ctrl_nr;
+static struct cdev              *moitessier_ctrl_object;
+static struct class             *moitessier_ctrl_class;
+static struct device            *moitessier_ctrl_dev;
 #if defined(USE_STATISTICS)
 static struct st_statistics     statistics;
 #endif /* USE_STATISTICS */
@@ -461,10 +461,10 @@ static atomic_t dataAvailForUser = ATOMIC_INIT(0);
 
 
 #if defined(USE_TTY)
-static struct st_naviDevSpi_serial *naviDev_serial;	
-static struct class *naviDev_tty_class;
-static struct device *naviDev_tty_dev;
-#define NAVIDEV_TTY_MAJOR		240
+static struct st_moitessierSpi_serial *moitessier_serial;	
+static struct class *moitessier_tty_class;
+static struct device *moitessier_tty_dev;
+#define MOITESSIER_TTY_MAJOR    240
 #endif /* USE_TTY */
 
 #if defined(USE_KEEP_ALIVE)
@@ -484,9 +484,9 @@ static DECLARE_WORK(work_object, keepAlive_queueFunc);
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
 
-static int naviDev_transmitSpiData(struct st_naviDevSpi *dev, char* data, unsigned int len, bool devBuf);
-static int naviDev_receiveSpiData(struct st_naviDevSpi *dev, size_t len);
-static void naviDev_resetHAT(uint32_t ms);
+static int moitessier_transmitSpiData(struct st_moitessierSpi *dev, char* data, unsigned int len, bool devBuf);
+static int moitessier_receiveSpiData(struct st_moitessierSpi *dev, size_t len);
+static void moitessier_resetHAT(uint32_t ms);
 
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
@@ -495,19 +495,19 @@ static void naviDev_resetHAT(uint32_t ms);
 ///////////////////////////////////////////////////////////////////////////////
 
 /* this parameter must correlate with the used device tree, otherwise the device will not be initialized */
-static const struct of_device_id naviDev_dt_ids[] = {
-	{ .compatible = "pe,navidev" },
+static const struct of_device_id moitessier_dt_ids[] = {
+	{ .compatible = "rooco,moitessier" },
 	{},
 };
-MODULE_DEVICE_TABLE(of, naviDev_dt_ids);
+MODULE_DEVICE_TABLE(of, moitessier_dt_ids);
 
 /* user triggered function, read from the device */
 /* returns the number of bytes read, or 0 if EOF reached */
-static ssize_t naviDev_read(struct file *filp, char __user *buf, size_t maxBytesToRead, loff_t *f_pos)
+static ssize_t moitessier_read(struct file *filp, char __user *buf, size_t maxBytesToRead, loff_t *f_pos)
 {
     ssize_t status = 0;
     size_t to_copy, not_copied;
-    struct st_naviDevSpi *dev;
+    struct st_moitessierSpi *dev;
 
     if(DEBUG_LEVEL >= LEVEL_DEBUG || DEBUG_LEVEL == LEVEL_DEBUG_SPI)
         pr_info("%s - max bytes to read: %d\n", __func__, maxBytesToRead);
@@ -515,7 +515,7 @@ static ssize_t naviDev_read(struct file *filp, char __user *buf, size_t maxBytes
     dev = filp->private_data;
     
 #if !defined(USE_TTY)
-   //    gpio_set_value(naviDev_spi->req_gpio[1].gpio, REQ_LEVEL_INACTIVE);
+   //    gpio_set_value(moitessier_spi->req_gpio[1].gpio, REQ_LEVEL_INACTIVE);
 #endif /* !USE_TTY */
     		
     if(!DATA_AVAILABLE_USER)
@@ -589,11 +589,11 @@ exit_read:
 /* user triggered function, write data to the device */
 /* returns the actual number of bytes written */
 /* the write function is not required at the moment */
-//static ssize_t naviDev_write(struct file *filp, const char __user *buf, size_t maxBytesToWrite, loff_t *f_pos)
+//static ssize_t moitessier_write(struct file *filp, const char __user *buf, size_t maxBytesToWrite, loff_t *f_pos)
 //{
 //    unsigned long not_copied;
 //    ssize_t status = 0;
-//    struct st_naviDevSpi *dev;
+//    struct st_moitessierSpi *dev;
 //    
 //    if(DEBUG_LEVEL >= LEVEL_DEBUG || DEBUG_LEVEL == LEVEL_DEBUG_SPI)
 //	    pr_info("%s\n", __func__);
@@ -606,7 +606,7 @@ exit_read:
 //	spin_lock_irq(&dev->spinlock);
 //	not_copied = copy_from_user(dev->txBuf, buf, maxBytesToWrite);
 //	if(not_copied == 0)
-//		status = naviDev_transmitSpiData(dev, NULL, maxBytesToWrite, true);
+//		status = moitessier_transmitSpiData(dev, NULL, maxBytesToWrite, true);
 //	else
 //		status = -EFAULT;
 //	spin_unlock_irq(&dev->spinlock);
@@ -616,9 +616,9 @@ exit_read:
 
 /* user triggered function, open the device */
 /* returns 0 on success or < 0 in case of an error */
-static int naviDev_open(struct inode *inode, struct file *filp)
+static int moitessier_open(struct inode *inode, struct file *filp)
 {
-    struct st_naviDevSpi *dev = naviDev_spi;
+    struct st_moitessierSpi *dev = moitessier_spi;
     int status = -EIO;
       
     if(DEBUG_LEVEL >= LEVEL_DEBUG || DEBUG_LEVEL == LEVEL_DEBUG_SPI)  
@@ -649,41 +649,41 @@ open_failed:
 	return status;		
 }
 
-static void naviDev_resetHAT(uint32_t ms)
+static void moitessier_resetHAT(uint32_t ms)
 {
     unsigned long iflags;
     
     if(DEBUG_LEVEL >= LEVEL_DEBUG)
         pr_info("%s\n", __func__);
     
-    spin_lock_irqsave(&naviDev_spi->spinlock, iflags);
+    spin_lock_irqsave(&moitessier_spi->spinlock, iflags);
     /* reset the HAT microcontroller */    
     if(USE_REQ_FOR_RESET)
     {
-        gpio_set_value(naviDev_spi->req_gpio[0].gpio, REQ_LEVEL_INACTIVE);
-        gpio_set_value(naviDev_spi->req_gpio[0].gpio, REQ_LEVEL_ACTIVE);
-        spin_unlock_irqrestore(&naviDev_spi->spinlock, iflags);
+        gpio_set_value(moitessier_spi->req_gpio[0].gpio, REQ_LEVEL_INACTIVE);
+        gpio_set_value(moitessier_spi->req_gpio[0].gpio, REQ_LEVEL_ACTIVE);
+        spin_unlock_irqrestore(&moitessier_spi->spinlock, iflags);
         if(ms)
             mdelay(ms);
-        spin_lock_irqsave(&naviDev_spi->spinlock, iflags);
-        gpio_set_value(naviDev_spi->req_gpio[0].gpio, REQ_LEVEL_INACTIVE);
+        spin_lock_irqsave(&moitessier_spi->spinlock, iflags);
+        gpio_set_value(moitessier_spi->req_gpio[0].gpio, REQ_LEVEL_INACTIVE);
     }
     else
     {
-        gpio_set_value(naviDev_spi->reset_gpio.gpio, RESET_LEVEL_INACTIVE);
-        gpio_set_value(naviDev_spi->reset_gpio.gpio, RESET_LEVEL_ACTIVE);
-        spin_unlock_irqrestore(&naviDev_spi->spinlock, iflags);
+        gpio_set_value(moitessier_spi->reset_gpio.gpio, RESET_LEVEL_INACTIVE);
+        gpio_set_value(moitessier_spi->reset_gpio.gpio, RESET_LEVEL_ACTIVE);
+        spin_unlock_irqrestore(&moitessier_spi->spinlock, iflags);
         if(ms)
             mdelay(ms);
-        spin_lock_irqsave(&naviDev_spi->spinlock, iflags);
-        gpio_set_value(naviDev_spi->reset_gpio.gpio, RESET_LEVEL_INACTIVE);
+        spin_lock_irqsave(&moitessier_spi->spinlock, iflags);
+        gpio_set_value(moitessier_spi->reset_gpio.gpio, RESET_LEVEL_INACTIVE);
     }
 
-    spin_unlock_irqrestore(&naviDev_spi->spinlock, iflags);
+    spin_unlock_irqrestore(&moitessier_spi->spinlock, iflags);
 }
 
 #if defined(USE_STATISTICS)
-void naviDev_resetStatistics(struct st_statistics *stat)
+void moitessier_resetStatistics(struct st_statistics *stat)
 {
     if(DEBUG_LEVEL >= LEVEL_DEBUG)
         pr_info("%s\n", __func__);
@@ -700,7 +700,7 @@ void naviDev_resetStatistics(struct st_statistics *stat)
 }
 #endif /* USE_STATISTICS */
 
-static long naviDev_ctrl_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
+static long moitessier_ctrl_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 {
     uint8_t dat[256];
     size_t rc = 0;
@@ -722,11 +722,11 @@ static long naviDev_ctrl_ioctl(struct file *filp, unsigned int cmd, unsigned lon
             size = sizeof(struct st_statistics);
             break;
         case IOCTL_RESET_STATISTICS:
-            naviDev_resetStatistics(&statistics);
+            moitessier_resetStatistics(&statistics);
             break;
 #endif /* USE_STATISTICS */                    
         case IOCTL_RESET_HAT:
-            naviDev_resetHAT(10);
+            moitessier_resetHAT(10);
             break;
         case IOCTL_GET_INFO:
             spin_lock_irq(&info.spinlock);
@@ -796,7 +796,7 @@ static long naviDev_ctrl_ioctl(struct file *filp, unsigned int cmd, unsigned lon
 }
 
 
-static long naviDev_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
+static long moitessier_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 {
     if(DEBUG_LEVEL >= LEVEL_DEBUG || DEBUG_LEVEL == LEVEL_DEBUG_SPI)
         pr_info("%s\n", __func__);
@@ -805,7 +805,7 @@ static long naviDev_ioctl(struct file *filp, unsigned int cmd, unsigned long arg
 	return 0;
 }
 
-static long naviDev_compat_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
+static long moitessier_compat_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 {
     if(DEBUG_LEVEL >= LEVEL_DEBUG || DEBUG_LEVEL == LEVEL_DEBUG_SPI)
         pr_info("%s\n", __func__);
@@ -816,9 +816,9 @@ static long naviDev_compat_ioctl(struct file *filp, unsigned int cmd, unsigned l
 
 /* user triggered function, close the device */
 /* returns 0 on success or < 0 on an error */
-static int naviDev_release(struct inode *inode, struct file *filp)
+static int moitessier_release(struct inode *inode, struct file *filp)
 {
-    struct st_naviDevSpi *dev;
+    struct st_moitessierSpi *dev;
     
     if(DEBUG_LEVEL >= LEVEL_DEBUG || DEBUG_LEVEL == LEVEL_DEBUG_SPI)
 	    pr_info("%s\n", __func__);
@@ -836,24 +836,24 @@ static int naviDev_release(struct inode *inode, struct file *filp)
 }
 
 /* user triggered file operations */
-static const struct file_operations naviDev_fops = {
+static const struct file_operations moitessier_fops = {
 	.owner              = THIS_MODULE,
-	//.write              = naviDev_write,
-	.read               = naviDev_read,
-	.open               = naviDev_open,
-	.release            = naviDev_release,
-	.unlocked_ioctl     = naviDev_ioctl,
-	.compat_ioctl       = naviDev_compat_ioctl,
+	//.write              = moitessier_write,
+	.read               = moitessier_read,
+	.open               = moitessier_open,
+	.release            = moitessier_release,
+	.unlocked_ioctl     = moitessier_ioctl,
+	.compat_ioctl       = moitessier_compat_ioctl,
 };
 
 /* user triggered file operations */
-static const struct file_operations naviDev_ctrlfops = {
+static const struct file_operations moitessier_ctrlfops = {
 	.owner              = THIS_MODULE,
-	.unlocked_ioctl     = naviDev_ctrl_ioctl,
+	.unlocked_ioctl     = moitessier_ctrl_ioctl,
 };
 
 /*
-static int FUNC_NOT_USED send_byte(struct st_naviDevSpi *dev, int data)
+static int FUNC_NOT_USED send_byte(struct st_moitessierSpi *dev, int data)
 {
 	int status;
 	struct spi_message msg = { };
@@ -875,7 +875,7 @@ static int FUNC_NOT_USED send_byte(struct st_naviDevSpi *dev, int data)
 };
 */
 
-static int naviDev_transmitSpiData(struct st_naviDevSpi *dev, char* data, unsigned int len, bool devBuf)
+static int moitessier_transmitSpiData(struct st_moitessierSpi *dev, char* data, unsigned int len, bool devBuf)
 {
 	int status;
 	struct spi_message msg = { };
@@ -900,7 +900,7 @@ static int naviDev_transmitSpiData(struct st_naviDevSpi *dev, char* data, unsign
 };
 
 
-static int FUNC_NOT_USED naviDev_receiveSpiData(struct st_naviDevSpi *dev, size_t len)
+static int FUNC_NOT_USED moitessier_receiveSpiData(struct st_moitessierSpi *dev, size_t len)
 {
     int status;
 	struct spi_message msg = { };
@@ -930,19 +930,19 @@ static int FUNC_NOT_USED naviDev_receiveSpiData(struct st_naviDevSpi *dev, size_
 #if defined(USE_KEEP_ALIVE)
 static void keepAlive_queueFunc(struct work_struct *work)
 {
-    if(!naviDev_spi)
+    if(!moitessier_spi)
         return;
     
-    if(!naviDev_spi->initialized)
+    if(!moitessier_spi->initialized)
         return;
     
     if(DEBUG_LEVEL >= LEVEL_WARNING)
         pr_info("%s - reseting HAT\n", __func__);        
         
-    naviDev_resetHAT(10);
+    moitessier_resetHAT(10);
 }
 
-static void naviDev_keepAlive(unsigned long dat)
+static void moitessier_keepAlive(unsigned long dat)
 {
     unsigned long iflags;
     
@@ -970,7 +970,7 @@ static void naviDev_keepAlive(unsigned long dat)
 }
 #endif /* USE_KEEP_ALIVE */
 
-void naviDev_processReqData(void)
+void moitessier_processReqData(void)
 {
 #if defined(USE_KEEP_ALIVE)    
     unsigned long iflags;
@@ -991,7 +991,7 @@ void naviDev_processReqData(void)
     request_t request;
 	response_t response;
 #if defined(USE_TTY)   
-    struct st_naviDevSpi_serial *serial = NULL;
+    struct st_moitessierSpi_serial *serial = NULL;
     struct tty_struct *tty = NULL;
 	struct tty_port *port = NULL;	
 #if defined(USE_MSG_CNT_TTY)  	
@@ -1000,47 +1000,47 @@ void naviDev_processReqData(void)
 #endif /* USE_MSG_CNT_TTY */
 #endif /* USE_TTY */	
 
-    if(!naviDev_spi)
+    if(!moitessier_spi)
         return;
     
     
-    spin_lock_irq(&naviDev_spi->spinlock);
+    spin_lock_irq(&moitessier_spi->spinlock);
     
     /* read data from the SPI interface */
-    //naviDev_receiveSpiData(naviDev_spi, BUF_SIZE);
+    //moitessier_receiveSpiData(moitessier_spi, BUF_SIZE);
     
-    memset(naviDev_spi->txBuf, 0, BUF_SIZE);
+    memset(moitessier_spi->txBuf, 0, BUF_SIZE);
    
     /* create configuration command */
-    HEADER_uint8_tToAsciiHex(CMD_CATEGORY_RESPONSE, &naviDev_spi->txBuf[posInTxBuf + HEADER_size()  + (offsetof(response_t, category) * 2)], NOT_NULL_TERMINATED);
-    HEADER_uint8_tToAsciiHex(CMD_CONFIG, &naviDev_spi->txBuf[posInTxBuf + HEADER_size() + (offsetof(response_t, cmd) * 2)], NOT_NULL_TERMINATED);
-    HEADER_uint8_tToAsciiHex(CMD_FIELD_NOT_USED, &naviDev_spi->txBuf[posInTxBuf + HEADER_size() + (offsetof(response_t, cmdSub) * 2)], NOT_NULL_TERMINATED);
+    HEADER_uint8_tToAsciiHex(CMD_CATEGORY_RESPONSE, &moitessier_spi->txBuf[posInTxBuf + HEADER_size()  + (offsetof(response_t, category) * 2)], NOT_NULL_TERMINATED);
+    HEADER_uint8_tToAsciiHex(CMD_CONFIG, &moitessier_spi->txBuf[posInTxBuf + HEADER_size() + (offsetof(response_t, cmd) * 2)], NOT_NULL_TERMINATED);
+    HEADER_uint8_tToAsciiHex(CMD_FIELD_NOT_USED, &moitessier_spi->txBuf[posInTxBuf + HEADER_size() + (offsetof(response_t, cmdSub) * 2)], NOT_NULL_TERMINATED);
     posPayload = sizeof(response_t) * 2; 
     spin_lock_irq(&configHAT.spinlock);
     for(i = 0; i < NUM_RCV; i++)
     {
         for(k = 0; k < NUM_RCV_CHANNELS; k++)
         {
-            HEADER_uint32_tToAsciiHex(configHAT.rcv[i].channelFreq[k], &naviDev_spi->txBuf[posInTxBuf + HEADER_size() + posPayload], NOT_NULL_TERMINATED);
+            HEADER_uint32_tToAsciiHex(configHAT.rcv[i].channelFreq[k], &moitessier_spi->txBuf[posInTxBuf + HEADER_size() + posPayload], NOT_NULL_TERMINATED);
             posPayload += DIM_ELEMENT(struct st_receiverConfig, channelFreq[k]) * 2;
         }
-        HEADER_uint8_tToAsciiHex(configHAT.rcv[i].metaDataMask, &naviDev_spi->txBuf[posInTxBuf + HEADER_size() + posPayload], NOT_NULL_TERMINATED);
+        HEADER_uint8_tToAsciiHex(configHAT.rcv[i].metaDataMask, &moitessier_spi->txBuf[posInTxBuf + HEADER_size() + posPayload], NOT_NULL_TERMINATED);
         posPayload += DIM_ELEMENT(struct st_receiverConfig, metaDataMask) * 2;
-        HEADER_uint32_tToAsciiHex(configHAT.rcv[i].afcRange, &naviDev_spi->txBuf[posInTxBuf + HEADER_size() + posPayload], NOT_NULL_TERMINATED);
+        HEADER_uint32_tToAsciiHex(configHAT.rcv[i].afcRange, &moitessier_spi->txBuf[posInTxBuf + HEADER_size() + posPayload], NOT_NULL_TERMINATED);
         posPayload += DIM_ELEMENT(struct st_receiverConfig, afcRange) * 2;
-        HEADER_uint32_tToAsciiHex(configHAT.rcv[i].tcxoFreq, &naviDev_spi->txBuf[posInTxBuf + HEADER_size() + posPayload], NOT_NULL_TERMINATED);
+        HEADER_uint32_tToAsciiHex(configHAT.rcv[i].tcxoFreq, &moitessier_spi->txBuf[posInTxBuf + HEADER_size() + posPayload], NOT_NULL_TERMINATED);
         posPayload += DIM_ELEMENT(struct st_receiverConfig, tcxoFreq) * 2;
     }
-    HEADER_uint8_tToAsciiHex(configHAT.simulator.enabled, &naviDev_spi->txBuf[posInTxBuf + HEADER_size() + posPayload], NOT_NULL_TERMINATED);
+    HEADER_uint8_tToAsciiHex(configHAT.simulator.enabled, &moitessier_spi->txBuf[posInTxBuf + HEADER_size() + posPayload], NOT_NULL_TERMINATED);
     posPayload += DIM_ELEMENT(struct st_simulator, enabled) * 2;  
-    HEADER_uint32_tToAsciiHex(configHAT.simulator.interval, &naviDev_spi->txBuf[posInTxBuf + HEADER_size() + posPayload], NOT_NULL_TERMINATED);
+    HEADER_uint32_tToAsciiHex(configHAT.simulator.interval, &moitessier_spi->txBuf[posInTxBuf + HEADER_size() + posPayload], NOT_NULL_TERMINATED);
     posPayload += DIM_ELEMENT(struct st_simulator, interval) * 2;    
     for(k = 0; k < NUM_RCV_CHANNELS; k++)
     {
-        HEADER_uint32_tToAsciiHex(configHAT.simulator.mmsi[k], &naviDev_spi->txBuf[posInTxBuf + HEADER_size() + posPayload], NOT_NULL_TERMINATED);
+        HEADER_uint32_tToAsciiHex(configHAT.simulator.mmsi[k], &moitessier_spi->txBuf[posInTxBuf + HEADER_size() + posPayload], NOT_NULL_TERMINATED);
         posPayload += DIM_ELEMENT(struct st_simulator, mmsi[k]) * 2;    
     }
-    HEADER_uint8_tToAsciiHex(configHAT.wpEEPROM, &naviDev_spi->txBuf[posInTxBuf + HEADER_size() + posPayload], NOT_NULL_TERMINATED);
+    HEADER_uint8_tToAsciiHex(configHAT.wpEEPROM, &moitessier_spi->txBuf[posInTxBuf + HEADER_size() + posPayload], NOT_NULL_TERMINATED);
     posPayload += DIM_ELEMENT(struct st_configHAT, wpEEPROM) * 2;  
     spin_unlock_irq(&configHAT.spinlock);
     
@@ -1053,7 +1053,7 @@ void naviDev_processReqData(void)
     header.payloadLen = posPayload;
     
     /* calculate the CRC for the payload */
-    HEADER_crc(&naviDev_spi->txBuf[posInTxBuf + HEADER_size()], header.payloadLen, &crc);
+    HEADER_crc(&moitessier_spi->txBuf[posInTxBuf + HEADER_size()], header.payloadLen, &crc);
     header.payloadCRC = crc;
     
     /* calculate the CRC of the header */
@@ -1061,7 +1061,7 @@ void naviDev_processReqData(void)
     header.headerCRC = crc;
     
     /* convert the header to ASCII HEX format so it can be transmitted and write it to the appropriate transmit buffer */
-    HEADER_set(&header, &naviDev_spi->txBuf[posInTxBuf], BUF_SIZE);
+    HEADER_set(&header, &moitessier_spi->txBuf[posInTxBuf], BUF_SIZE);
     
     posInTxBuf = HEADER_size() + header.payloadLen;
 
@@ -1069,10 +1069,10 @@ void naviDev_processReqData(void)
     if(!info.valid)
     {
         /* create the command/payload that should be transmitted to the SPI slave */
-        HEADER_uint8_tToAsciiHex(CMD_CATEGORY_REQUEST, &naviDev_spi->txBuf[posInTxBuf + HEADER_size()  + (offsetof(request_t, category) * 2)], NOT_NULL_TERMINATED);
-        HEADER_uint8_tToAsciiHex(CMD_INFO, &naviDev_spi->txBuf[posInTxBuf + HEADER_size() + (offsetof(request_t, cmd) * 2)], NOT_NULL_TERMINATED);
-        HEADER_uint8_tToAsciiHex(CMD_INFO_SYSTEM, &naviDev_spi->txBuf[posInTxBuf + HEADER_size() + (offsetof(request_t, cmdSub) * 2)], NOT_NULL_TERMINATED);
-        HEADER_uint8_tToAsciiHex(CMD_FIELD_NOT_USED, &naviDev_spi->txBuf[posInTxBuf + HEADER_size() + (offsetof(request_t, param) * 2)], NOT_NULL_TERMINATED);
+        HEADER_uint8_tToAsciiHex(CMD_CATEGORY_REQUEST, &moitessier_spi->txBuf[posInTxBuf + HEADER_size()  + (offsetof(request_t, category) * 2)], NOT_NULL_TERMINATED);
+        HEADER_uint8_tToAsciiHex(CMD_INFO, &moitessier_spi->txBuf[posInTxBuf + HEADER_size() + (offsetof(request_t, cmd) * 2)], NOT_NULL_TERMINATED);
+        HEADER_uint8_tToAsciiHex(CMD_INFO_SYSTEM, &moitessier_spi->txBuf[posInTxBuf + HEADER_size() + (offsetof(request_t, cmdSub) * 2)], NOT_NULL_TERMINATED);
+        HEADER_uint8_tToAsciiHex(CMD_FIELD_NOT_USED, &moitessier_spi->txBuf[posInTxBuf + HEADER_size() + (offsetof(request_t, param) * 2)], NOT_NULL_TERMINATED);
         
         /* fill the header for the payload with default settings */
         HEADER_setDefaults(&header);
@@ -1083,7 +1083,7 @@ void naviDev_processReqData(void)
         header.payloadLen = (sizeof(request_t) * 2);
         
         /* calculate the CRC for the payload */
-        HEADER_crc(&naviDev_spi->txBuf[posInTxBuf + HEADER_size()], header.payloadLen, &crc);
+        HEADER_crc(&moitessier_spi->txBuf[posInTxBuf + HEADER_size()], header.payloadLen, &crc);
         header.payloadCRC = crc;
         
         /* calculate the CRC of the header */
@@ -1091,7 +1091,7 @@ void naviDev_processReqData(void)
         header.headerCRC = crc;
         
         /* convert the header to ASCII HEX format so it can be transmitted and write it to the appropriate transmit buffer */
-        HEADER_set(&header, &naviDev_spi->txBuf[posInTxBuf], BUF_SIZE);      
+        HEADER_set(&header, &moitessier_spi->txBuf[posInTxBuf], BUF_SIZE);      
     }
     /*
     else if(...)
@@ -1105,7 +1105,7 @@ void naviDev_processReqData(void)
     }
     
     /* start SPI transmission */
-    naviDev_transmitSpiData(naviDev_spi, NULL, BUF_SIZE, true);
+    moitessier_transmitSpiData(moitessier_spi, NULL, BUF_SIZE, true);
     
     
 #if defined(USE_STATISTICS)    
@@ -1123,18 +1123,18 @@ void naviDev_processReqData(void)
             break;
             
         /* search for a header in the received data, if available process the data otherwise leave this function */
-        if(HEADER_find(naviDev_spi->rxBuf, BUF_SIZE, lastHeaderPos, &headerPos))
+        if(HEADER_find(moitessier_spi->rxBuf, BUF_SIZE, lastHeaderPos, &headerPos))
         {
             /* error handling */
             if(DEBUG_LEVEL >= LEVEL_WARNING && !headerCnt)
                 pr_err("%s - HEADER_find(...) failed - %u\n", __func__, headerCnt);
-            goto naviDev_processReqData_exit;
+            goto moitessier_processReqData_exit;
         }
         
         headerCnt++;
         
         /* read the header data from the receiver buffer and convert the ASCII only data to the appropriate header structure */
-        if(HEADER_get(&naviDev_spi->rxBuf[headerPos], BUF_SIZE, &header))
+        if(HEADER_get(&moitessier_spi->rxBuf[headerPos], BUF_SIZE, &header))
         {
             if(DEBUG_LEVEL >= LEVEL_WARNING)
                 pr_err("%s - HEADER_get(...) failed\n", __func__);
@@ -1159,7 +1159,7 @@ void naviDev_processReqData(void)
         }
         
         /* check if the payload is valid, otherwise drop data and restart searching for a valid header */
-        if(HEADER_payloadIsValid(&header, &naviDev_spi->rxBuf[headerPos + HEADER_size()]))
+        if(HEADER_payloadIsValid(&header, &moitessier_spi->rxBuf[headerPos + HEADER_size()]))
         {
             if(DEBUG_LEVEL >= LEVEL_WARNING)
                 pr_err("%s - HEADER_payloadIsValid(...) failed\n", __func__);
@@ -1186,13 +1186,13 @@ void naviDev_processReqData(void)
         
         /* check if the received message is for the system */
         /* all none system related messages are NMEA messages and start either with $ or ! */
-        if(naviDev_spi->rxBuf[headerPos + HEADER_size()] != '$' && 
-            naviDev_spi->rxBuf[headerPos + HEADER_size()] != '!')
+        if(moitessier_spi->rxBuf[headerPos + HEADER_size()] != '$' && 
+            moitessier_spi->rxBuf[headerPos + HEADER_size()] != '!')
         {
-            request.category = HEADER_asciiHexToUint8_t(&naviDev_spi->rxBuf[headerPos + HEADER_size() + (offsetof(request_t, category) * 2)]);
-        	request.cmd = HEADER_asciiHexToUint8_t(&naviDev_spi->rxBuf[headerPos + HEADER_size() + (offsetof(request_t, cmd) * 2)]);
-        	request.cmdSub = HEADER_asciiHexToUint8_t(&naviDev_spi->rxBuf[headerPos + HEADER_size() + (offsetof(request_t, cmdSub) * 2)]);
-        	request.param = HEADER_asciiHexToUint8_t(&naviDev_spi->rxBuf[headerPos + HEADER_size() + (offsetof(request_t, param) * 2)]);
+            request.category = HEADER_asciiHexToUint8_t(&moitessier_spi->rxBuf[headerPos + HEADER_size() + (offsetof(request_t, category) * 2)]);
+        	request.cmd = HEADER_asciiHexToUint8_t(&moitessier_spi->rxBuf[headerPos + HEADER_size() + (offsetof(request_t, cmd) * 2)]);
+        	request.cmdSub = HEADER_asciiHexToUint8_t(&moitessier_spi->rxBuf[headerPos + HEADER_size() + (offsetof(request_t, cmdSub) * 2)]);
+        	request.param = HEADER_asciiHexToUint8_t(&moitessier_spi->rxBuf[headerPos + HEADER_size() + (offsetof(request_t, param) * 2)]);
         	
         	response.category = request.category;
         	response.cmd = request.cmd;
@@ -1209,58 +1209,58 @@ void naviDev_processReqData(void)
                     
                     /* the response header is stored in ASCII HEX format in the receive buffer, so we need to multiply by 2 (sizeof(response_t) * 2) to 
                        get the index to the payload */ 
-                    memcpy(&info.mode, (uint8_t*)&naviDev_spi->rxBuf[headerPos + HEADER_size() + sizeof(response_t) * 2 + offsetof(struct st_info, mode)], 
+                    memcpy(&info.mode, (uint8_t*)&moitessier_spi->rxBuf[headerPos + HEADER_size() + sizeof(response_t) * 2 + offsetof(struct st_info, mode)], 
                             DIM_ELEMENT(struct st_info, hwId));
-                    memcpy(info.hwId, (uint8_t*)&naviDev_spi->rxBuf[headerPos + HEADER_size() + sizeof(response_t) * 2 + offsetof(struct st_info, hwId)], 
+                    memcpy(info.hwId, (uint8_t*)&moitessier_spi->rxBuf[headerPos + HEADER_size() + sizeof(response_t) * 2 + offsetof(struct st_info, hwId)], 
                             DIM_ELEMENT(struct st_info, hwId));
-                    memcpy(info.hwVer, (uint8_t*)&naviDev_spi->rxBuf[headerPos + HEADER_size() + sizeof(response_t) * 2 + offsetof(struct st_info, hwVer)], 
+                    memcpy(info.hwVer, (uint8_t*)&moitessier_spi->rxBuf[headerPos + HEADER_size() + sizeof(response_t) * 2 + offsetof(struct st_info, hwVer)], 
                             DIM_ELEMENT(struct st_info, hwVer));
-                    memcpy(info.bootVer, (uint8_t*)&naviDev_spi->rxBuf[headerPos + HEADER_size() + sizeof(response_t) * 2 + offsetof(struct st_info, bootVer)], 
+                    memcpy(info.bootVer, (uint8_t*)&moitessier_spi->rxBuf[headerPos + HEADER_size() + sizeof(response_t) * 2 + offsetof(struct st_info, bootVer)], 
                             DIM_ELEMENT(struct st_info, bootVer));
-                    memcpy(info.appVer, (uint8_t*)&naviDev_spi->rxBuf[headerPos + HEADER_size() + sizeof(response_t) * 2 + offsetof(struct st_info, appVer)],
+                    memcpy(info.appVer, (uint8_t*)&moitessier_spi->rxBuf[headerPos + HEADER_size() + sizeof(response_t) * 2 + offsetof(struct st_info, appVer)],
                             DIM_ELEMENT(struct st_info, appVer));
                     posPayload = sizeof(response_t) * 2 + offsetof(struct st_info, appVer) + DIM_ELEMENT(struct st_info, appVer);                       
-                    info.functionality = HEADER_asciiHexToUint32_t((uint8_t*)&naviDev_spi->rxBuf[headerPos + HEADER_size() + posPayload]);
+                    info.functionality = HEADER_asciiHexToUint32_t((uint8_t*)&moitessier_spi->rxBuf[headerPos + HEADER_size() + posPayload]);
                     posPayload += DIM_ELEMENT(struct st_info, functionality) * 2;
-                    info.systemErrors = HEADER_asciiHexToUint32_t((uint8_t*)&naviDev_spi->rxBuf[headerPos + HEADER_size() + posPayload]);
+                    info.systemErrors = HEADER_asciiHexToUint32_t((uint8_t*)&moitessier_spi->rxBuf[headerPos + HEADER_size() + posPayload]);
                     posPayload += DIM_ELEMENT(struct st_info, systemErrors) * 2;
-                    info.serial.h = HEADER_asciiHexToUint32_t((uint8_t*)&naviDev_spi->rxBuf[headerPos + HEADER_size() + posPayload]);
+                    info.serial.h = HEADER_asciiHexToUint32_t((uint8_t*)&moitessier_spi->rxBuf[headerPos + HEADER_size() + posPayload]);
                     posPayload += DIM_ELEMENT(struct st_info_serial, h) * 2;
-                    info.serial.m = HEADER_asciiHexToUint32_t((uint8_t*)&naviDev_spi->rxBuf[headerPos + HEADER_size() + posPayload]);
+                    info.serial.m = HEADER_asciiHexToUint32_t((uint8_t*)&moitessier_spi->rxBuf[headerPos + HEADER_size() + posPayload]);
                     posPayload += DIM_ELEMENT(struct st_info_serial, m) * 2;
-                    info.serial.l = HEADER_asciiHexToUint32_t((uint8_t*)&naviDev_spi->rxBuf[headerPos + HEADER_size() + posPayload]);
+                    info.serial.l = HEADER_asciiHexToUint32_t((uint8_t*)&moitessier_spi->rxBuf[headerPos + HEADER_size() + posPayload]);
                     posPayload += DIM_ELEMENT(struct st_info_serial, l) * 2;
                     for(i = 0; i < NUM_RCV; i++)
                     {
                         for(k = 0; k < NUM_RCV_CHANNELS; k++)
                         {
-                            info.rcv[i].config.channelFreq[k] = HEADER_asciiHexToUint32_t((uint8_t*)&naviDev_spi->rxBuf[headerPos + HEADER_size() + posPayload]);
+                            info.rcv[i].config.channelFreq[k] = HEADER_asciiHexToUint32_t((uint8_t*)&moitessier_spi->rxBuf[headerPos + HEADER_size() + posPayload]);
                             posPayload += DIM_ELEMENT(struct st_receiverConfig, channelFreq[k]) * 2;
                         }
-                        info.rcv[i].config.metaDataMask = HEADER_asciiHexToUint8_t((uint8_t*)&naviDev_spi->rxBuf[headerPos + HEADER_size() + posPayload]);
+                        info.rcv[i].config.metaDataMask = HEADER_asciiHexToUint8_t((uint8_t*)&moitessier_spi->rxBuf[headerPos + HEADER_size() + posPayload]);
                         posPayload += DIM_ELEMENT(struct st_receiverConfig, metaDataMask) * 2;
-                        info.rcv[i].config.afcRange = HEADER_asciiHexToUint32_t((uint8_t*)&naviDev_spi->rxBuf[headerPos + HEADER_size() + posPayload]);
+                        info.rcv[i].config.afcRange = HEADER_asciiHexToUint32_t((uint8_t*)&moitessier_spi->rxBuf[headerPos + HEADER_size() + posPayload]);
                         posPayload += DIM_ELEMENT(struct st_receiverConfig, afcRange) * 2;
-                        info.rcv[i].config.afcRangeDefault = HEADER_asciiHexToUint32_t((uint8_t*)&naviDev_spi->rxBuf[headerPos + HEADER_size() + posPayload]);
+                        info.rcv[i].config.afcRangeDefault = HEADER_asciiHexToUint32_t((uint8_t*)&moitessier_spi->rxBuf[headerPos + HEADER_size() + posPayload]);
                         posPayload += DIM_ELEMENT(struct st_receiverConfig, afcRangeDefault) * 2;
-                        info.rcv[i].config.tcxoFreq = HEADER_asciiHexToUint32_t((uint8_t*)&naviDev_spi->rxBuf[headerPos + HEADER_size() + posPayload]);
+                        info.rcv[i].config.tcxoFreq = HEADER_asciiHexToUint32_t((uint8_t*)&moitessier_spi->rxBuf[headerPos + HEADER_size() + posPayload]);
                         posPayload += DIM_ELEMENT(struct st_receiverConfig, tcxoFreq) * 2;
                         for(k = 0; k < NUM_RCV_CHANNELS; k++)
                         {
-                            info.rcv[i].rng[k] = HEADER_asciiHexToUint8_t((uint8_t*)&naviDev_spi->rxBuf[headerPos + HEADER_size() + posPayload]);
+                            info.rcv[i].rng[k] = HEADER_asciiHexToUint8_t((uint8_t*)&moitessier_spi->rxBuf[headerPos + HEADER_size() + posPayload]);
                             posPayload += DIM_ELEMENT(struct st_info_rcv, rng[k]) * 2;
                         }
                     }
-                    info.simulator.enabled = HEADER_asciiHexToUint8_t((uint8_t*)&naviDev_spi->rxBuf[headerPos + HEADER_size() + posPayload]);
+                    info.simulator.enabled = HEADER_asciiHexToUint8_t((uint8_t*)&moitessier_spi->rxBuf[headerPos + HEADER_size() + posPayload]);
                     posPayload += DIM_ELEMENT(struct st_simulator, enabled) * 2;
-                    info.simulator.interval = HEADER_asciiHexToUint32_t((uint8_t*)&naviDev_spi->rxBuf[headerPos + HEADER_size() + posPayload]);
+                    info.simulator.interval = HEADER_asciiHexToUint32_t((uint8_t*)&moitessier_spi->rxBuf[headerPos + HEADER_size() + posPayload]);
                     posPayload += DIM_ELEMENT(struct st_simulator, interval) * 2;
                     for(k = 0; k < NUM_RCV_CHANNELS; k++)
                     {
-                        info.simulator.mmsi[k] = HEADER_asciiHexToUint32_t((uint8_t*)&naviDev_spi->rxBuf[headerPos + HEADER_size() + posPayload]);
+                        info.simulator.mmsi[k] = HEADER_asciiHexToUint32_t((uint8_t*)&moitessier_spi->rxBuf[headerPos + HEADER_size() + posPayload]);
                         posPayload += DIM_ELEMENT(struct st_simulator, mmsi[k]) * 2;
                     }
-                    info.wpEEPROM = HEADER_asciiHexToUint8_t((uint8_t*)&naviDev_spi->rxBuf[headerPos + HEADER_size() + posPayload]);
+                    info.wpEEPROM = HEADER_asciiHexToUint8_t((uint8_t*)&moitessier_spi->rxBuf[headerPos + HEADER_size() + posPayload]);
                     posPayload += DIM_ELEMENT(struct st_info, wpEEPROM) * 2;
                     info.valid = true;
                     
@@ -1289,7 +1289,7 @@ void naviDev_processReqData(void)
             msg = kmalloc(header.payloadLen + 1, GFP_KERNEL);
             if(msg)
             {
-                memcpy(msg, &naviDev_spi->rxBuf[headerPos + HEADER_size()], header.payloadLen);
+                memcpy(msg, &moitessier_spi->rxBuf[headerPos + HEADER_size()], header.payloadLen);
                 msg[header.payloadLen] = '\0';
                 pr_info("%s - %s", __func__, msg);
                 kfree(msg);      
@@ -1301,11 +1301,11 @@ void naviDev_processReqData(void)
         if(header.payloadLen > 3)
         {
             spin_lock_irq(&config.spinlock);
-            if(naviDev_spi->rxBuf[headerPos + HEADER_size() + 0] == '$' && \
-               naviDev_spi->rxBuf[headerPos + HEADER_size() + 1] == 'G' && \
-               (naviDev_spi->rxBuf[headerPos + HEADER_size() + 2] == 'N' || \
-                naviDev_spi->rxBuf[headerPos + HEADER_size() + 2] == 'P' ||
-                naviDev_spi->rxBuf[headerPos + HEADER_size() + 2] == 'L') &&\
+            if(moitessier_spi->rxBuf[headerPos + HEADER_size() + 0] == '$' && \
+               moitessier_spi->rxBuf[headerPos + HEADER_size() + 1] == 'G' && \
+               (moitessier_spi->rxBuf[headerPos + HEADER_size() + 2] == 'N' || \
+                moitessier_spi->rxBuf[headerPos + HEADER_size() + 2] == 'P' ||
+                moitessier_spi->rxBuf[headerPos + HEADER_size() + 2] == 'L') &&\
                 !config.gnssEnabled)
             {
                 
@@ -1319,7 +1319,7 @@ void naviDev_processReqData(void)
         
         /* we process the data further only, if the device specified in DEVICE_NAME_SPI is opened at all, otherwise data will
            be dropped */
-        if(naviDev_spi->opened)
+        if(moitessier_spi->opened)
         {
             fifoFull = false;
             
@@ -1343,7 +1343,7 @@ void naviDev_processReqData(void)
             if(!fifoFull && processData)
             {
                 /* append the new data to the FIFO */
-                memcpy(&rxFifo.data[rxFifo.cnt], &naviDev_spi->rxBuf[headerPos + HEADER_size()], header.payloadLen); 
+                memcpy(&rxFifo.data[rxFifo.cnt], &moitessier_spi->rxBuf[headerPos + HEADER_size()], header.payloadLen); 
                 rxFifo.cnt += header.payloadLen;
                 dataProcessed = true;
             }
@@ -1357,7 +1357,7 @@ void naviDev_processReqData(void)
         }
         
 #if defined(USE_TTY)
-        serial = naviDev_serial;
+        serial = moitessier_serial;
                 
         mutex_lock(&serial->lock);       
         if(serial)
@@ -1373,7 +1373,7 @@ void naviDev_processReqData(void)
             	{
             		if (!tty_buffer_request_room(port, 1))
                         tty_flip_buffer_push(port);
-                    tty_insert_flip_char(port, naviDev_spi->rxBuf[headerPos + HEADER_size() + k], TTY_NORMAL);
+                    tty_insert_flip_char(port, moitessier_spi->rxBuf[headerPos + HEADER_size() + k], TTY_NORMAL);
                     
             	}
             	
@@ -1397,21 +1397,21 @@ void naviDev_processReqData(void)
         lastHeaderPos += (HEADER_size() + header.payloadLen);
     }while(1);
  
-naviDev_processReqData_exit:    
+moitessier_processReqData_exit:    
 #if defined(USE_TTY)
-    gpio_set_value(naviDev_spi->req_gpio[1].gpio, REQ_LEVEL_INACTIVE);	
+    gpio_set_value(moitessier_spi->req_gpio[1].gpio, REQ_LEVEL_INACTIVE);	
 #endif /* USE_TTY */            
     
     if(dataProcessed)
         SET_DATA_AVAILABLE_USER;
 
-    spin_unlock_irq(&naviDev_spi->spinlock);
+    spin_unlock_irq(&moitessier_spi->spinlock);
     
     if(dataProcessed)
         wake_up_interruptible(&wq_read);
 }
 
-static int naviDev_thread(void *data)
+static int moitessier_thread(void *data)
 {
     allow_signal(SIGTERM);    
     
@@ -1425,7 +1425,7 @@ static int naviDev_thread(void *data)
         }
         SLAVE_REQ_CONFIRMED;
         
-        naviDev_processReqData();
+        moitessier_processReqData();
     }
     
     complete_and_exit(&on_exit, 0);
@@ -1436,46 +1436,46 @@ static void irq_tasklet(unsigned long data)
     unsigned int irq = atomic_read(&irqOccured);
     unsigned int i = 0;
     
-    if(!naviDev_spi)
+    if(!moitessier_spi)
         return;
     
-    if(!naviDev_spi->initialized)
+    if(!moitessier_spi->initialized)
         return;
         
-    spin_lock(&naviDev_spi->spinlock);    
+    spin_lock(&moitessier_spi->spinlock);    
     
     /* determine which GPIO has caused the interrupt */
-    for(i = 0; i < DIM(naviDev_spi->irq_gpio); i++)
+    for(i = 0; i < DIM(moitessier_spi->irq_gpio); i++)
     {
-        if(naviDev_spi->irq_gpio[i].irq == irq)
+        if(moitessier_spi->irq_gpio[i].irq == irq)
             break;
     }
     
-    if(i <= DIM(naviDev_spi->irq_gpio))
+    if(i <= DIM(moitessier_spi->irq_gpio))
     {
-        if(jiffies < naviDev_spi->irq_gpio[i].jiffiesEvent)
-            naviDev_spi->irq_gpio[i].jiffiesEvent = jiffies;
+        if(jiffies < moitessier_spi->irq_gpio[i].jiffiesEvent)
+            moitessier_spi->irq_gpio[i].jiffiesEvent = jiffies;
             
-        if(((((unsigned long)naviDev_spi->irq_gpio[i].jiffiesEvent + (unsigned long)msecs_to_jiffies(DEBOUNCE_MS)) < (unsigned long)jiffies)) || DEBOUNCE_MS == 0)
+        if(((((unsigned long)moitessier_spi->irq_gpio[i].jiffiesEvent + (unsigned long)msecs_to_jiffies(DEBOUNCE_MS)) < (unsigned long)jiffies)) || DEBOUNCE_MS == 0)
         {
-            naviDev_spi->irq_gpio[i].jiffiesEvent = jiffies;
+            moitessier_spi->irq_gpio[i].jiffiesEvent = jiffies;
         }
             
-        if(i == 1 && naviDev_spi->spi)
+        if(i == 1 && moitessier_spi->spi)
         {
-            gpio_set_value(naviDev_spi->req_gpio[i].gpio, REQ_LEVEL_ACTIVE);
+            gpio_set_value(moitessier_spi->req_gpio[i].gpio, REQ_LEVEL_ACTIVE);
             SLAVE_REQ_RECEIVED;
 #if defined(USE_THREAD)            
             wake_up_interruptible(&wq_thread);
 #else /* !USE_THREAD */                       
-            spin_unlock(&naviDev_spi->spinlock); 
-            naviDev_processReqData();
-            spin_lock(&naviDev_spi->spinlock); 
+            spin_unlock(&moitessier_spi->spinlock); 
+            moitessier_processReqData();
+            spin_lock(&moitessier_spi->spinlock); 
 #endif /* !USE_THREAD */                          
         }     
     }
     
-    spin_unlock(&naviDev_spi->spinlock); 
+    spin_unlock(&moitessier_spi->spinlock); 
 }
 
 static irqreturn_t ctrl_IrqHandler(int irq, void* data)
@@ -1487,9 +1487,9 @@ static irqreturn_t ctrl_IrqHandler(int irq, void* data)
     return IRQ_HANDLED;
 }
 
-static int naviDev_probe(struct spi_device *spi)
+static int moitessier_probe(struct spi_device *spi)
 {  
-    struct device_node *naviDevNode = spi->dev.of_node;
+    struct device_node *moitessierNode = spi->dev.of_node;
     struct device_node *reqNodes;
     struct device_node *irqNodes;
     struct device_node *bootNode;
@@ -1510,27 +1510,27 @@ include/linux/of.h
         pr_info("%s\n", __func__);
 	  
     /* allocate driver data */
-	naviDev_spi = kzalloc(sizeof(*naviDev_spi), GFP_KERNEL);
-	if (!naviDev_spi)
+	moitessier_spi = kzalloc(sizeof(*moitessier_spi), GFP_KERNEL);
+	if (!moitessier_spi)
 		return -ENOMEM;
     
-    naviDev_spi->initialized = false;
-    naviDev_spi->opened = false;
+    moitessier_spi->initialized = false;
+    moitessier_spi->opened = false;
     
 	/* initialize the driver data */
-	naviDev_spi->spi = spi;
+	moitessier_spi->spi = spi;
 
     /* determine how many child nodes are available, this is for debugging only */
-    childCnt = of_get_available_child_count(naviDevNode);
+    childCnt = of_get_available_child_count(moitessierNode);
     if(DEBUG_LEVEL >= LEVEL_INFO)
         pr_info("%s - childCnt: %d\n", __func__, childCnt);
       
-    property = of_get_property(naviDevNode, "spi-max-frequency", &size);
-    naviDev_spi->speed_hz = be32_to_cpup(property);
+    property = of_get_property(moitessierNode, "spi-max-frequency", &size);
+    moitessier_spi->speed_hz = be32_to_cpup(property);
     if(DEBUG_LEVEL >= LEVEL_INFO)
-        pr_info("%s - SPI speed: %d\n", __func__, naviDev_spi->speed_hz);
+        pr_info("%s - SPI speed: %d\n", __func__, moitessier_spi->speed_hz);
         
-    reqNodes = of_get_child_by_name(naviDevNode, "imc_req");
+    reqNodes = of_get_child_by_name(moitessierNode, "imc_req");
     if(reqNodes == NULL)
     {
         if(DEBUG_LEVEL >= LEVEL_CRITICAL)
@@ -1538,7 +1538,7 @@ include/linux/of.h
         goto free_memory;  
     }
     
-    irqNodes = of_get_child_by_name(naviDevNode, "imc_irq");
+    irqNodes = of_get_child_by_name(moitessierNode, "imc_irq");
     if(irqNodes == NULL)
     {
         if(DEBUG_LEVEL >= LEVEL_CRITICAL)
@@ -1546,7 +1546,7 @@ include/linux/of.h
         goto free_memory;  
     }
     
-    bootNode = of_get_child_by_name(naviDevNode, "boot");
+    bootNode = of_get_child_by_name(moitessierNode, "boot");
     if(bootNode == NULL)
     {
         if(DEBUG_LEVEL >= LEVEL_CRITICAL)
@@ -1554,7 +1554,7 @@ include/linux/of.h
         goto free_memory;  
     }
     
-    resetNode = of_get_child_by_name(naviDevNode, "reset");
+    resetNode = of_get_child_by_name(moitessierNode, "reset");
     if(resetNode == NULL)
     {
         if(DEBUG_LEVEL >= LEVEL_CRITICAL)
@@ -1570,175 +1570,175 @@ include/linux/of.h
     /* initialize REQ signals */
     for(i = 0; i < of_gpio_count(reqNodes); i++)
     {
-        naviDev_spi->req_gpio[i].gpio = of_get_gpio_flags(reqNodes, i, &flags);
-		naviDev_spi->req_gpio[i].flags = (int)flags;
-        naviDev_spi->req_gpio[i].name = of_get_property(reqNodes, "pe,name", &size);
-        naviDev_spi->req_gpio[i].irq = -1;
-        naviDev_spi->req_gpio[i].nr = i;
+        moitessier_spi->req_gpio[i].gpio = of_get_gpio_flags(reqNodes, i, &flags);
+		moitessier_spi->req_gpio[i].flags = (int)flags;
+        moitessier_spi->req_gpio[i].name = of_get_property(reqNodes, "rooco,name", &size);
+        moitessier_spi->req_gpio[i].irq = -1;
+        moitessier_spi->req_gpio[i].nr = i;
         
-        gpio_request(naviDev_spi->req_gpio[i].gpio, naviDev_spi->req_gpio[i].name);
-		gpio_direction_output(naviDev_spi->req_gpio[i].gpio, !naviDev_spi->req_gpio[i].flags);
-        gpio_export(naviDev_spi->req_gpio[i].gpio, false); 
+        gpio_request(moitessier_spi->req_gpio[i].gpio, moitessier_spi->req_gpio[i].name);
+		gpio_direction_output(moitessier_spi->req_gpio[i].gpio, !moitessier_spi->req_gpio[i].flags);
+        gpio_export(moitessier_spi->req_gpio[i].gpio, false); 
         
         if(DEBUG_LEVEL >= LEVEL_INFO)
         { 
             pr_info("%s - ID: %u\tGPIO Nr.: %u\tGPIO Dir: %u\tGPIO IRQ: %d\tGPIO Name: %s%u\n", \
     		        __func__,                           \
     		        id,                                 \
-    		        naviDev_spi->req_gpio[i].gpio,          \
-    		        naviDev_spi->req_gpio[i].flags,         \
-    		        naviDev_spi->req_gpio[i].irq,           \
-    		        naviDev_spi->req_gpio[i].name,          \
-    		        naviDev_spi->req_gpio[i].nr             \
+    		        moitessier_spi->req_gpio[i].gpio,          \
+    		        moitessier_spi->req_gpio[i].flags,         \
+    		        moitessier_spi->req_gpio[i].irq,           \
+    		        moitessier_spi->req_gpio[i].name,          \
+    		        moitessier_spi->req_gpio[i].nr             \
 		      );
 		}
     }
     
     /* initialize BOOT signal */ 
-    naviDev_spi->boot_gpio.gpio = of_get_gpio_flags(bootNode, 0, &flags);
-	naviDev_spi->boot_gpio.flags = (int)flags;
-    naviDev_spi->boot_gpio.name = of_get_property(bootNode, "pe,name", &size);
-    naviDev_spi->boot_gpio.irq = -1;
+    moitessier_spi->boot_gpio.gpio = of_get_gpio_flags(bootNode, 0, &flags);
+	moitessier_spi->boot_gpio.flags = (int)flags;
+    moitessier_spi->boot_gpio.name = of_get_property(bootNode, "rooco,name", &size);
+    moitessier_spi->boot_gpio.irq = -1;
     
-    gpio_request(naviDev_spi->boot_gpio.gpio, naviDev_spi->boot_gpio.name);
-	gpio_direction_output(naviDev_spi->boot_gpio.gpio, !naviDev_spi->boot_gpio.flags);
-    gpio_export(naviDev_spi->boot_gpio.gpio, false);         
+    gpio_request(moitessier_spi->boot_gpio.gpio, moitessier_spi->boot_gpio.name);
+	gpio_direction_output(moitessier_spi->boot_gpio.gpio, !moitessier_spi->boot_gpio.flags);
+    gpio_export(moitessier_spi->boot_gpio.gpio, false);         
     
     if(DEBUG_LEVEL >= LEVEL_INFO)
     {
         pr_info("%s - ID: %u\tGPIO Nr.: %u\tGPIO Dir: %u\tGPIO IRQ: %d\tGPIO Name: %s\n", \
     		        __func__,                           \
     		        id,                                 \
-    		        naviDev_spi->boot_gpio.gpio,          \
-    		        naviDev_spi->boot_gpio.flags,         \
-    		        naviDev_spi->boot_gpio.irq,           \
-    		        naviDev_spi->boot_gpio.name           \
+    		        moitessier_spi->boot_gpio.gpio,          \
+    		        moitessier_spi->boot_gpio.flags,         \
+    		        moitessier_spi->boot_gpio.irq,           \
+    		        moitessier_spi->boot_gpio.name           \
     	      );
 	}
 	      
     /* initialize RESET signal */	      
-	naviDev_spi->reset_gpio.gpio = of_get_gpio_flags(resetNode, 0, &flags);
-	naviDev_spi->reset_gpio.flags = (int)flags;
-    naviDev_spi->reset_gpio.name = of_get_property(resetNode, "pe,name", &size);
-    naviDev_spi->reset_gpio.irq = -1;
-    gpio_request(naviDev_spi->reset_gpio.gpio, naviDev_spi->reset_gpio.name);
-    gpio_export(naviDev_spi->reset_gpio.gpio, false);         
+	moitessier_spi->reset_gpio.gpio = of_get_gpio_flags(resetNode, 0, &flags);
+	moitessier_spi->reset_gpio.flags = (int)flags;
+    moitessier_spi->reset_gpio.name = of_get_property(resetNode, "rooco,name", &size);
+    moitessier_spi->reset_gpio.irq = -1;
+    gpio_request(moitessier_spi->reset_gpio.gpio, moitessier_spi->reset_gpio.name);
+    gpio_export(moitessier_spi->reset_gpio.gpio, false);         
 	
     if(USE_REQ_FOR_RESET)   
     {
-        gpio_direction_input(naviDev_spi->reset_gpio.gpio);
-        //gpio_direction_output(naviDev_spi->reset_gpio.gpio, RESET_LEVEL_INACTIVE);
+        gpio_direction_input(moitessier_spi->reset_gpio.gpio);
+        //gpio_direction_output(moitessier_spi->reset_gpio.gpio, RESET_LEVEL_INACTIVE);
     }
     else
-        gpio_direction_output(naviDev_spi->reset_gpio.gpio, naviDev_spi->reset_gpio.flags);
+        gpio_direction_output(moitessier_spi->reset_gpio.gpio, moitessier_spi->reset_gpio.flags);
     
     if(DEBUG_LEVEL >= LEVEL_INFO)
     { 
         pr_info("%s - ID: %u\tGPIO Nr.: %u\tGPIO Dir: %u\tGPIO IRQ: %d\tGPIO Name: %s\n", \
     		        __func__,                           \
     		        id,                                 \
-    		        naviDev_spi->reset_gpio.gpio,          \
-    		        naviDev_spi->reset_gpio.flags,         \
-    		        naviDev_spi->reset_gpio.irq,           \
-    		        naviDev_spi->reset_gpio.name           \
+    		        moitessier_spi->reset_gpio.gpio,          \
+    		        moitessier_spi->reset_gpio.flags,         \
+    		        moitessier_spi->reset_gpio.irq,           \
+    		        moitessier_spi->reset_gpio.name           \
     	      );
     }
     
     /* initialize IRQ signals */
     for(i = 0; i < of_gpio_count(irqNodes); i++)
     {
-        naviDev_spi->irq_gpio[i].gpio = of_get_gpio_flags(irqNodes, i, &flags);
-		naviDev_spi->irq_gpio[i].flags = (int)flags;
-        naviDev_spi->irq_gpio[i].name = of_get_property(irqNodes, "pe,name", &size);
-        naviDev_spi->irq_gpio[i].irq = gpio_to_irq(naviDev_spi->irq_gpio[i].gpio);
-        naviDev_spi->irq_gpio[i].jiffiesEvent = jiffies;
-        naviDev_spi->irq_gpio[i].nr = i;
+        moitessier_spi->irq_gpio[i].gpio = of_get_gpio_flags(irqNodes, i, &flags);
+		moitessier_spi->irq_gpio[i].flags = (int)flags;
+        moitessier_spi->irq_gpio[i].name = of_get_property(irqNodes, "rooco,name", &size);
+        moitessier_spi->irq_gpio[i].irq = gpio_to_irq(moitessier_spi->irq_gpio[i].gpio);
+        moitessier_spi->irq_gpio[i].jiffiesEvent = jiffies;
+        moitessier_spi->irq_gpio[i].nr = i;
         
-        gpio_request(naviDev_spi->irq_gpio[i].gpio, naviDev_spi->irq_gpio[i].name);
-		gpio_direction_input(naviDev_spi->irq_gpio[i].gpio);
-		gpio_set_debounce(naviDev_spi->irq_gpio[i].gpio, 10000);
-        gpio_export(naviDev_spi->irq_gpio[i].gpio, false);         
+        gpio_request(moitessier_spi->irq_gpio[i].gpio, moitessier_spi->irq_gpio[i].name);
+		gpio_direction_input(moitessier_spi->irq_gpio[i].gpio);
+		gpio_set_debounce(moitessier_spi->irq_gpio[i].gpio, 10000);
+        gpio_export(moitessier_spi->irq_gpio[i].gpio, false);         
         
         if(DEBUG_LEVEL >= LEVEL_INFO)
         { 
             pr_info("%s - ID: %u\tGPIO Nr.: %u\tGPIO Dir: %u\tGPIO IRQ: %d\tGPIO Name: %s%u\n", \
         		        __func__,                           \
         		        id,                                 \
-        		        naviDev_spi->irq_gpio[i].gpio,          \
-        		        naviDev_spi->irq_gpio[i].flags,         \
-        		        naviDev_spi->irq_gpio[i].irq,           \
-        		        naviDev_spi->irq_gpio[i].name,          \
-        		        naviDev_spi->irq_gpio[i].nr             \
+        		        moitessier_spi->irq_gpio[i].gpio,          \
+        		        moitessier_spi->irq_gpio[i].flags,         \
+        		        moitessier_spi->irq_gpio[i].irq,           \
+        		        moitessier_spi->irq_gpio[i].name,          \
+        		        moitessier_spi->irq_gpio[i].nr             \
     		      );
         }
 		      
-		if(naviDev_spi->irq_gpio[i].irq < 0)
+		if(moitessier_spi->irq_gpio[i].irq < 0)
         {
             goto free_gpios;
         }
         
-        rc = request_irq(naviDev_spi->irq_gpio[i].irq, ctrl_IrqHandler, IRQF_TRIGGER_RISING/* IRQF_TRIGGER_FALLING*/, naviDev_spi->irq_gpio[i].name, (void*)naviDev_spi);
+        rc = request_irq(moitessier_spi->irq_gpio[i].irq, ctrl_IrqHandler, IRQF_TRIGGER_RISING/* IRQF_TRIGGER_FALLING*/, moitessier_spi->irq_gpio[i].name, (void*)moitessier_spi);
         if(rc) 
         {
             if(DEBUG_LEVEL >= LEVEL_CRITICAL)
-                pr_err("%s - request_irq() failed with error = %d irq = %d\n", __func__, rc, naviDev_spi->irq_gpio[i].irq);
+                pr_err("%s - request_irq() failed with error = %d irq = %d\n", __func__, rc, moitessier_spi->irq_gpio[i].irq);
             goto free_irq;
         }
     }
     
     /* The HAT might have been booted prior driver loading. We reset the HAT to ensure a specified and safe state. */
-    naviDev_resetHAT(1);
+    moitessier_resetHAT(1);
 
-    naviDev_spi->initialized = true;
+    moitessier_spi->initialized = true;
 	return 0;
 	
 	/* cleaning up... */
 free_irq:
     for(k = 0; k < i; k++)
     {
-        disable_irq(naviDev_spi->irq_gpio[k].irq);
-        free_irq(naviDev_spi->irq_gpio[k].irq, naviDev_spi);	 
+        disable_irq(moitessier_spi->irq_gpio[k].irq);
+        free_irq(moitessier_spi->irq_gpio[k].irq, moitessier_spi);	 
     }
 free_gpios:
     for(i = 0; i < of_gpio_count(reqNodes); i++)
     {
-        gpio_unexport(naviDev_spi->req_gpio[k].gpio);
-        gpio_free(naviDev_spi->req_gpio[k].gpio); 
+        gpio_unexport(moitessier_spi->req_gpio[k].gpio);
+        gpio_free(moitessier_spi->req_gpio[k].gpio); 
     }
     
-    gpio_unexport(naviDev_spi->boot_gpio.gpio);
-    gpio_free(naviDev_spi->boot_gpio.gpio);         
-    gpio_unexport(naviDev_spi->reset_gpio.gpio);
-    gpio_free(naviDev_spi->reset_gpio.gpio); 
+    gpio_unexport(moitessier_spi->boot_gpio.gpio);
+    gpio_free(moitessier_spi->boot_gpio.gpio);         
+    gpio_unexport(moitessier_spi->reset_gpio.gpio);
+    gpio_free(moitessier_spi->reset_gpio.gpio); 
     
     for(k = 0; k <= i; k++)    
     {
-        gpio_unexport(naviDev_spi->irq_gpio[k].gpio);
-        gpio_free(naviDev_spi->irq_gpio[k].gpio); 
+        gpio_unexport(moitessier_spi->irq_gpio[k].gpio);
+        gpio_free(moitessier_spi->irq_gpio[k].gpio); 
     }
 free_memory:
-    kfree(naviDev_spi);
+    kfree(moitessier_spi);
     return -EIO;          
 }
 
-static int naviDev_remove(struct spi_device *spi)
+static int moitessier_remove(struct spi_device *spi)
 {
     if(DEBUG_LEVEL >= LEVEL_DEBUG || DEBUG_LEVEL == LEVEL_DEBUG_SPI)
 	    pr_info("%s\n", __func__);
 	return 0;
 }
 
-static struct spi_driver naviDev_spi_driver = {
+static struct spi_driver moitessier_spi_driver = {
 	.driver = {
-		.name =		"navigation device driver",
-		.of_match_table = of_match_ptr(naviDev_dt_ids),
+		.name =		"Moitessier Device Driver",
+		.of_match_table = of_match_ptr(moitessier_dt_ids),
 	},
-	.probe =	naviDev_probe,
-	.remove =	naviDev_remove,
+	.probe =	moitessier_probe,
+	.remove =	moitessier_remove,
 };
 
 /* set the proper access rights for the device specified in DEVICE_NAME_SPI */
-static int naviDev_spi_uevent(struct device *dev, struct kobj_uevent_env *env)
+static int moitessier_spi_uevent(struct device *dev, struct kobj_uevent_env *env)
 {
     if(DEBUG_LEVEL >= LEVEL_DEBUG || DEBUG_LEVEL == LEVEL_DEBUG_SPI)
         pr_info("%s\n", __func__);
@@ -1749,7 +1749,7 @@ static int naviDev_spi_uevent(struct device *dev, struct kobj_uevent_env *env)
 }
 
 /* set the proper access rights for the device specified in DEVICE_NAME_CTRL */
-static int naviDev_ctrl_uevent(struct device *dev, struct kobj_uevent_env *env)
+static int moitessier_ctrl_uevent(struct device *dev, struct kobj_uevent_env *env)
 {
     if(DEBUG_LEVEL >= LEVEL_DEBUG || DEBUG_LEVEL == LEVEL_DEBUG_SPI)
         pr_info("%s\n", __func__);
@@ -1762,7 +1762,7 @@ static int naviDev_ctrl_uevent(struct device *dev, struct kobj_uevent_env *env)
 #if defined(USE_TTY)
 /* user triggered function, open the device */
 /* returns 0 on success or < 0 on an error */
-static int naviDev_tty_open(struct tty_struct *tty, struct file *file)
+static int moitessier_tty_open(struct tty_struct *tty, struct file *file)
 {
     if(DEBUG_LEVEL >= LEVEL_DEBUG || DEBUG_LEVEL == LEVEL_DEBUG_TTY)
 	    pr_info("%s\n", __func__);
@@ -1770,24 +1770,24 @@ static int naviDev_tty_open(struct tty_struct *tty, struct file *file)
 	/* initialize the pointer in case something fails */
 	tty->driver_data = NULL;
 	
-	if (!naviDev_serial)
+	if (!moitessier_serial)
 		return -ENODEV;
 
-	mutex_lock(&naviDev_serial->lock);
+	mutex_lock(&moitessier_serial->lock);
 
 	/* save our structure within the tty structure */
-	naviDev_serial->opened = true;
-	tty->driver_data = naviDev_serial;
-	naviDev_serial->tty = tty;	
+	moitessier_serial->opened = true;
+	tty->driver_data = moitessier_serial;
+	moitessier_serial->tty = tty;	
 	
-	mutex_unlock(&naviDev_serial->lock);
+	mutex_unlock(&moitessier_serial->lock);
 	return 0;
 }
 
 /* user triggered function, close the device */
-static void naviDev_tty_close(struct tty_struct *tty, struct file *file)
+static void moitessier_tty_close(struct tty_struct *tty, struct file *file)
 {
-    struct st_naviDevSpi_serial *serial = tty->driver_data;
+    struct st_moitessierSpi_serial *serial = tty->driver_data;
     
 	if(DEBUG_LEVEL >= LEVEL_DEBUG || DEBUG_LEVEL == LEVEL_DEBUG_TTY)
         pr_info("%s\n", __func__);
@@ -1797,7 +1797,7 @@ static void naviDev_tty_close(struct tty_struct *tty, struct file *file)
     mutex_unlock(&serial->lock);
 }	
 
-static void naviDev_tty_throttle(struct tty_struct *tty)
+static void moitessier_tty_throttle(struct tty_struct *tty)
 {
 	if(DEBUG_LEVEL >= LEVEL_DEBUG || DEBUG_LEVEL == LEVEL_DEBUG_TTY)
         pr_info("%s\n", __func__);
@@ -1805,7 +1805,7 @@ static void naviDev_tty_throttle(struct tty_struct *tty)
     /* TODO: need to be implemented */                
 }	
 
-static void naviDev_tty_unthrottle(struct tty_struct *tty)
+static void moitessier_tty_unthrottle(struct tty_struct *tty)
 {
 	if(DEBUG_LEVEL >= LEVEL_DEBUG || DEBUG_LEVEL == LEVEL_DEBUG_TTY)
         pr_info("%s\n", __func__);
@@ -1813,9 +1813,9 @@ static void naviDev_tty_unthrottle(struct tty_struct *tty)
     /* TODO: need to be implemented */            
 }
 
-static int naviDev_tty_putchar(struct tty_struct *tty, unsigned char ch)
+static int moitessier_tty_putchar(struct tty_struct *tty, unsigned char ch)
 {
-	struct st_naviDevSpi_serial *serial = tty->driver_data;
+	struct st_moitessierSpi_serial *serial = tty->driver_data;
 	
     if (!serial)
 		return -ENODEV;
@@ -1836,9 +1836,9 @@ static int naviDev_tty_putchar(struct tty_struct *tty, unsigned char ch)
 
 /* user triggered function, write data to the device */
 /* returns the actual number of bytes written */
-static int naviDev_tty_write(struct tty_struct *tty, const unsigned char *buffer, int count)
+static int moitessier_tty_write(struct tty_struct *tty, const unsigned char *buffer, int count)
 {
-	struct st_naviDevSpi_serial *serial = tty->driver_data;
+	struct st_moitessierSpi_serial *serial = tty->driver_data;
 	int i;
 	
     if (!serial)
@@ -1861,9 +1861,9 @@ static int naviDev_tty_write(struct tty_struct *tty, const unsigned char *buffer
 	return count;
 }
 
-static int naviDev_tty_write_room(struct tty_struct *tty) 
+static int moitessier_tty_write_room(struct tty_struct *tty) 
 {
-	struct st_naviDevSpi_serial *serial = tty->driver_data;
+	struct st_moitessierSpi_serial *serial = tty->driver_data;
 	int room = -EINVAL;
 
     if(DEBUG_LEVEL >= LEVEL_DEBUG || DEBUG_LEVEL == LEVEL_DEBUG_TTY)
@@ -1882,7 +1882,7 @@ static int naviDev_tty_write_room(struct tty_struct *tty)
 	return room;
 }
 
-static void naviDev_tty_set_termios(struct tty_struct *tty, struct ktermios *old_termios)
+static void moitessier_tty_set_termios(struct tty_struct *tty, struct ktermios *old_termios)
 {
     if(DEBUG_LEVEL >= LEVEL_DEBUG || DEBUG_LEVEL == LEVEL_DEBUG_TTY)
         pr_info("%s\n", __func__);    
@@ -1891,14 +1891,14 @@ static void naviDev_tty_set_termios(struct tty_struct *tty, struct ktermios *old
 }
 
 /* Will be called if the device specified in DEVICE_NAME_TTY is opened the first time. This is acutally executed prior open(...). */
-static int naviDev_tty_install(struct tty_driver *driver, struct tty_struct *tty)
+static int moitessier_tty_install(struct tty_driver *driver, struct tty_struct *tty)
 {
 	int retval = -ENOMEM;
     
     if(DEBUG_LEVEL >= LEVEL_DEBUG || DEBUG_LEVEL == LEVEL_DEBUG_TTY)
         pr_info("%s\n", __func__);
 
-    mutex_lock(&naviDev_serial->lock);
+    mutex_lock(&moitessier_serial->lock);
 	tty->port = kmalloc(sizeof *tty->port, GFP_KERNEL);
 	if (!tty->port)
 		goto err;
@@ -1911,8 +1911,8 @@ static int naviDev_tty_install(struct tty_driver *driver, struct tty_struct *tty
 	tty_driver_kref_get(driver);
 	tty->count++;	
 	
-	naviDev_serial->initialized = true;
-    mutex_unlock(&naviDev_serial->lock);
+	moitessier_serial->initialized = true;
+    mutex_unlock(&moitessier_serial->lock);
 	return 0;
 
 err:
@@ -1923,18 +1923,18 @@ err:
 }
 
 static struct tty_operations serial_ops = {
-	.open           = naviDev_tty_open,
-	.close          = naviDev_tty_close,
-	.write          = naviDev_tty_write,
-	.write_room     = naviDev_tty_write_room,
-	.set_termios    = naviDev_tty_set_termios,
-    .install        = naviDev_tty_install,
-    .throttle       = naviDev_tty_throttle,
-    .unthrottle     = naviDev_tty_unthrottle,
-    .put_char       = naviDev_tty_putchar,
+	.open           = moitessier_tty_open,
+	.close          = moitessier_tty_close,
+	.write          = moitessier_tty_write,
+	.write_room     = moitessier_tty_write_room,
+	.set_termios    = moitessier_tty_set_termios,
+    .install        = moitessier_tty_install,
+    .throttle       = moitessier_tty_throttle,
+    .unthrottle     = moitessier_tty_unthrottle,
+    .put_char       = moitessier_tty_putchar,
 };
 
-static char *naviDev_tty_devnode(struct device *dev, umode_t *mode)
+static char *moitessier_tty_devnode(struct device *dev, umode_t *mode)
 {
     if(DEBUG_LEVEL >= LEVEL_DEBUG || DEBUG_LEVEL == LEVEL_DEBUG_TTY)
         pr_info("%s\n", __func__);
@@ -1946,7 +1946,7 @@ static char *naviDev_tty_devnode(struct device *dev, umode_t *mode)
 	return NULL;
 }
 
-static int naviDev_tty_uevent(struct device *dev, struct kobj_uevent_env *env)
+static int moitessier_tty_uevent(struct device *dev, struct kobj_uevent_env *env)
 {
     if(DEBUG_LEVEL >= LEVEL_DEBUG || DEBUG_LEVEL == LEVEL_DEBUG_TTY)
         pr_info("%s\n", __func__);
@@ -1954,16 +1954,16 @@ static int naviDev_tty_uevent(struct device *dev, struct kobj_uevent_env *env)
     return 0;
 }
 
-static struct tty_driver *naviDev_tty_driver;
+static struct tty_driver *moitessier_tty_driver;
 #endif /* USE_TTY */
 
-static int __init naviDev_init(void)
+static int __init moitessier_init(void)
 {
     if(DEBUG_LEVEL >= LEVEL_INFO)
         pr_info("%s\n", __func__);
 
 #if defined(USE_TTY)	
-	naviDev_serial = NULL;
+	moitessier_serial = NULL;
 #endif /* USE_TTY */	
 	
 	rxFifo.size = FIFO_SIZE;
@@ -1971,7 +1971,7 @@ static int __init naviDev_init(void)
 	memset(rxFifo.data, 0, rxFifo.size);		
 	
 	/* reserve device number */	
-	if(alloc_chrdev_region(&naviDev_spi_nr, 0, 1, DEVICE_NAME_SPI) < 0)
+	if(alloc_chrdev_region(&moitessier_spi_nr, 0, 1, DEVICE_NAME_SPI) < 0)
 	{
 	    if(DEBUG_LEVEL >= LEVEL_CRITICAL || DEBUG_LEVEL == LEVEL_DEBUG_SPI)
 	        pr_err("%s - failed to reserve device number for \"%s\"\n", __func__, DEVICE_NAME_SPI);
@@ -1979,19 +1979,19 @@ static int __init naviDev_init(void)
 	}
 	
 	/* allocate memory for the cdev structure */
-	naviDev_spi_object = cdev_alloc(); 
-	if(naviDev_spi_object == NULL)
+	moitessier_spi_object = cdev_alloc(); 
+	if(moitessier_spi_object == NULL)
 	{
 	    if(DEBUG_LEVEL >= LEVEL_CRITICAL || DEBUG_LEVEL == LEVEL_DEBUG_SPI)
 	        pr_err("%s - failed to allocate memory for device \"%s\"\n", __func__, DEVICE_NAME_SPI);
 		goto free_device_number;
 	}
 		
-    naviDev_spi_object->owner = THIS_MODULE;
-	naviDev_spi_object->ops = &naviDev_fops; 
+    moitessier_spi_object->owner = THIS_MODULE;
+	moitessier_spi_object->ops = &moitessier_fops; 
 	
 	/* register cdev object at the kernel */
-	if(cdev_add(naviDev_spi_object, naviDev_spi_nr, 1))
+	if(cdev_add(moitessier_spi_object, moitessier_spi_nr, 1))
 	{
 	    if(DEBUG_LEVEL >= LEVEL_CRITICAL || DEBUG_LEVEL == LEVEL_DEBUG_SPI)
 	        pr_err("%s - failed to register cdev object at kernel\n", __func__);
@@ -1999,8 +1999,8 @@ static int __init naviDev_init(void)
 	}
 	
     /* create new device class */
-	naviDev_spi_class = class_create(THIS_MODULE, DEVICE_NAME_SPI);
-	if(naviDev_spi_class == NULL)
+	moitessier_spi_class = class_create(THIS_MODULE, DEVICE_NAME_SPI);
+	if(moitessier_spi_class == NULL)
 	{
 	    if(DEBUG_LEVEL >= LEVEL_CRITICAL || DEBUG_LEVEL == LEVEL_DEBUG_SPI)
 	        pr_err("%s - failed to create device \"%s\"\n", __func__, DEVICE_NAME_SPI);
@@ -2008,67 +2008,67 @@ static int __init naviDev_init(void)
 	}
 	
 	/* define function to set access permissions for the device file */
-    naviDev_spi_class->dev_uevent = naviDev_spi_uevent;
+    moitessier_spi_class->dev_uevent = moitessier_spi_uevent;
     		
     /* create device file */
-	naviDev_spi_dev = device_create(naviDev_spi_class, NULL, naviDev_spi_nr, NULL, "%s", DEVICE_NAME_SPI);
+	moitessier_spi_dev = device_create(moitessier_spi_class, NULL, moitessier_spi_nr, NULL, "%s", DEVICE_NAME_SPI);
 
 #if defined(USE_TTY)
     /* allocate the tty driver */
-	naviDev_tty_driver = alloc_tty_driver(1);
-	if (!naviDev_tty_driver)
+	moitessier_tty_driver = alloc_tty_driver(1);
+	if (!moitessier_tty_driver)
 	{
 	    if(DEBUG_LEVEL >= LEVEL_CRITICAL || DEBUG_LEVEL == LEVEL_DEBUG_TTY)
 	        pr_err("%s - failed to allocate memory for TTY driver\n", __func__);
 	    goto free_class;
 	}
 	
-	if(naviDev_serial == NULL)
+	if(moitessier_serial == NULL)
 	{
-		naviDev_serial = kmalloc(sizeof(*naviDev_serial), GFP_KERNEL);
-		if (!naviDev_serial)
+		moitessier_serial = kmalloc(sizeof(*moitessier_serial), GFP_KERNEL);
+		if (!moitessier_serial)
 	    {
             if(DEBUG_LEVEL >= LEVEL_CRITICAL || DEBUG_LEVEL == LEVEL_DEBUG_TTY)
 	            pr_err("%s - failed to allocate memory\n", __func__);
 	        goto free_tty;
 	    }
-	    naviDev_serial->initialized = false;
-	    naviDev_serial->opened = false;
-	    naviDev_serial->tty = NULL;
-	    //naviDev_serial->tty->port = NULL;
+	    moitessier_serial->initialized = false;
+	    moitessier_serial->opened = false;
+	    moitessier_serial->tty = NULL;
+	    //moitessier_serial->tty->port = NULL;
 	}
 		
 
 	/* initialize the tty driver */
-	naviDev_tty_driver->owner = THIS_MODULE;
-	naviDev_tty_driver->driver_name = DEVICE_NAME_TTY;
-	naviDev_tty_driver->name = DEVICE_NAME_TTY;
-	naviDev_tty_driver->major = NAVIDEV_TTY_MAJOR,
-	naviDev_tty_driver->type = TTY_DRIVER_TYPE_SYSTEM,
-	naviDev_tty_driver->subtype = SYSTEM_TYPE_CONSOLE,
-	naviDev_tty_driver->flags = TTY_DRIVER_REAL_RAW | TTY_DRIVER_DYNAMIC_DEV | TTY_DRIVER_UNNUMBERED_NODE,
-	naviDev_tty_driver->init_termios = tty_std_termios;
-	naviDev_tty_driver->init_termios.c_cflag = B115200 | CS8 | CREAD | HUPCL | CLOCAL;
-	naviDev_tty_driver->init_termios.c_lflag &= ~ECHO;
-	naviDev_tty_driver->init_termios.c_iflag |= INLCR;
-	tty_set_operations(naviDev_tty_driver, &serial_ops);
+	moitessier_tty_driver->owner = THIS_MODULE;
+	moitessier_tty_driver->driver_name = DEVICE_NAME_TTY;
+	moitessier_tty_driver->name = DEVICE_NAME_TTY;
+	moitessier_tty_driver->major = MOITESSIER_TTY_MAJOR,
+	moitessier_tty_driver->type = TTY_DRIVER_TYPE_SYSTEM,
+	moitessier_tty_driver->subtype = SYSTEM_TYPE_CONSOLE,
+	moitessier_tty_driver->flags = TTY_DRIVER_REAL_RAW | TTY_DRIVER_DYNAMIC_DEV | TTY_DRIVER_UNNUMBERED_NODE,
+	moitessier_tty_driver->init_termios = tty_std_termios;
+	moitessier_tty_driver->init_termios.c_cflag = B115200 | CS8 | CREAD | HUPCL | CLOCAL;
+	moitessier_tty_driver->init_termios.c_lflag &= ~ECHO;
+	moitessier_tty_driver->init_termios.c_iflag |= INLCR;
+	tty_set_operations(moitessier_tty_driver, &serial_ops);
 	
 	/* register the tty driver */
-	if(tty_register_driver(naviDev_tty_driver))
+	if(tty_register_driver(moitessier_tty_driver))
 	{
 	    if(DEBUG_LEVEL >= LEVEL_CRITICAL || DEBUG_LEVEL == LEVEL_DEBUG_TTY)
 		    pr_err("%s - failed to register TTY driver\n", __func__);
 		goto free_tty_mem;
 	}
 	
-	naviDev_tty_dev = tty_register_device(naviDev_tty_driver, 0, NULL);
-	naviDev_tty_class = naviDev_tty_dev->class;
-	if(naviDev_tty_class)
+	moitessier_tty_dev = tty_register_device(moitessier_tty_driver, 0, NULL);
+	moitessier_tty_class = moitessier_tty_dev->class;
+	if(moitessier_tty_class)
     {
         /* currently settings permissions does not work, why not??? */
         /* it works for the SPI device file but not for TTY */
-	    naviDev_tty_class->dev_uevent = naviDev_tty_uevent;
-	    naviDev_tty_class->devnode = naviDev_tty_devnode;
+	    moitessier_tty_class->dev_uevent = moitessier_tty_uevent;
+	    moitessier_tty_class->devnode = moitessier_tty_devnode;
 	}   
 	else
     {
@@ -2079,7 +2079,7 @@ static int __init naviDev_init(void)
 #endif /* USE_TTY */    
 		
      /* register driver at the SPI core */
-	if(spi_register_driver(&naviDev_spi_driver) < 0)	
+	if(spi_register_driver(&moitessier_spi_driver) < 0)	
 	{
 	    if(DEBUG_LEVEL >= LEVEL_CRITICAL || DEBUG_LEVEL == LEVEL_DEBUG_SPI)
 	        pr_err("%s - failed to register SPI driver\n", __func__);
@@ -2087,7 +2087,7 @@ static int __init naviDev_init(void)
 		goto free_all;
 	}
 	
-    if(alloc_chrdev_region(&naviDev_ctrl_nr, 0, 1, DEVICE_NAME_CTRL) < 0)
+    if(alloc_chrdev_region(&moitessier_ctrl_nr, 0, 1, DEVICE_NAME_CTRL) < 0)
 	{
 	    if(DEBUG_LEVEL >= LEVEL_CRITICAL)
 	        pr_err("%s - failed to reserve device number for \"%s\"\n", __func__, DEVICE_NAME_CTRL);
@@ -2095,19 +2095,19 @@ static int __init naviDev_init(void)
 	}
 	
 	/* allocate memory for the cdev structure */
-	naviDev_ctrl_object = cdev_alloc(); 
-	if(naviDev_ctrl_object == NULL)
+	moitessier_ctrl_object = cdev_alloc(); 
+	if(moitessier_ctrl_object == NULL)
 	{
 	    if(DEBUG_LEVEL >= LEVEL_CRITICAL)
 	        pr_err("%s - failed to allocate memory for device \"%s\"\n", __func__, DEVICE_NAME_CTRL);
 		goto free_stat_device_number;
 	}
 		
-    naviDev_ctrl_object->owner = THIS_MODULE;
-	naviDev_ctrl_object->ops = &naviDev_ctrlfops; 
+    moitessier_ctrl_object->owner = THIS_MODULE;
+	moitessier_ctrl_object->ops = &moitessier_ctrlfops; 
 	
 	/* register cdev object at the kernel */
-	if(cdev_add(naviDev_ctrl_object, naviDev_ctrl_nr, 1))
+	if(cdev_add(moitessier_ctrl_object, moitessier_ctrl_nr, 1))
 	{
 	    if(DEBUG_LEVEL >= LEVEL_CRITICAL)
 	        pr_err("%s - failed to register cdev object at kernel\n", __func__);
@@ -2115,8 +2115,8 @@ static int __init naviDev_init(void)
 	}
 	
     /* create new device class */
-	naviDev_ctrl_class = class_create(THIS_MODULE, DEVICE_NAME_CTRL);
-	if(naviDev_ctrl_class == NULL)
+	moitessier_ctrl_class = class_create(THIS_MODULE, DEVICE_NAME_CTRL);
+	if(moitessier_ctrl_class == NULL)
 	{
 	    if(DEBUG_LEVEL >= LEVEL_CRITICAL)
 	        pr_err("%s - failed to create device \"%s\"\n", __func__, DEVICE_NAME_CTRL);
@@ -2124,15 +2124,15 @@ static int __init naviDev_init(void)
 	}
 	
 	/* define function to set access permissions for the device file */
-    naviDev_ctrl_class->dev_uevent = naviDev_ctrl_uevent;
+    moitessier_ctrl_class->dev_uevent = moitessier_ctrl_uevent;
     		
     /* create device file */
-	naviDev_ctrl_dev = device_create(naviDev_ctrl_class, NULL, naviDev_ctrl_nr, NULL, "%s", DEVICE_NAME_CTRL);
+	moitessier_ctrl_dev = device_create(moitessier_ctrl_class, NULL, moitessier_ctrl_nr, NULL, "%s", DEVICE_NAME_CTRL);
 	
 	RESET_DATA_AVAILABLE_USER;
 	SLAVE_REQ_CONFIRMED;
 	
-    spin_lock_init(&naviDev_spi->spinlock);
+    spin_lock_init(&moitessier_spi->spinlock);
     spin_lock_init(&rxFifo.spinlock);
 #if defined(USE_STATISTICS)    
     spin_lock_init(&statistics.spinlock);
@@ -2145,13 +2145,13 @@ static int __init naviDev_init(void)
     spin_lock_init(&configHAT.spinlock);
    
 #if defined(USE_TTY)    
-    mutex_init(&naviDev_serial->lock);
+    mutex_init(&moitessier_serial->lock);
 #endif /* USE_TTY */    
     
     init_waitqueue_head(&wq_read);
 
 #if defined(USE_STATISTICS)    
-    naviDev_resetStatistics(&statistics);
+    moitessier_resetStatistics(&statistics);
 #endif /* USE_STATISTICS */    
     
     info.valid = false;
@@ -2160,16 +2160,16 @@ static int __init naviDev_init(void)
     /* the kernel thread is used for transmitting data via SPI, this only for debugging purpose */
 #if defined(USE_THREAD)    
     init_waitqueue_head(&wq_thread);
-    thread_id = kthread_create(naviDev_thread, NULL, "naviDev thread");
+    thread_id = kthread_create(moitessier_thread, NULL, "moitessier thread");
     wake_up_process(thread_id);
 #endif /* USE_THREAD */    
 
 #if defined(USE_KEEP_ALIVE)
     wq = create_workqueue("KEEP ALIVE");
-    /* initialize a timer that is used to check communication to the nav.HAT */
+    /* initialize a timer that is used to check communication to the Moitessier HAT */
     spin_lock_init(&timerKeepAlive_spinlock);
     init_timer(&timerKeepAlive);
-    timerKeepAlive.function = naviDev_keepAlive;
+    timerKeepAlive.function = moitessier_keepAlive;
     timerKeepAlive.data = 0;
     timerKeepAlive.expires = KEEP_ALIVE_TIMEOUT(KEEP_ALIVE_TIMEOUT_LONG_MS);
     add_timer(&timerKeepAlive);
@@ -2190,49 +2190,49 @@ static int __init naviDev_init(void)
 	
 /* cleaning up... */
 free_stat_class:
-    naviDev_ctrl_class->dev_uevent = NULL;
-    device_destroy(naviDev_ctrl_class, naviDev_ctrl_nr);
-    class_destroy(naviDev_ctrl_class);
+    moitessier_ctrl_class->dev_uevent = NULL;
+    device_destroy(moitessier_ctrl_class, moitessier_ctrl_nr);
+    class_destroy(moitessier_ctrl_class);
 free_stat_cdev:
-    kobject_put(&naviDev_ctrl_object->kobj);
+    kobject_put(&moitessier_ctrl_object->kobj);
 free_stat_device_number:
-    unregister_chrdev_region(naviDev_ctrl_nr, 1);
+    unregister_chrdev_region(moitessier_ctrl_nr, 1);
 free_spi_driver:
-    spi_unregister_driver(&naviDev_spi_driver);  
+    spi_unregister_driver(&moitessier_spi_driver);  
 free_all:
 #if defined(USE_TTY)    
-    tty_unregister_device(naviDev_tty_driver, 0);
+    tty_unregister_device(moitessier_tty_driver, 0);
 #endif /* USE_TTY */    
 free_tty_driver:
 #if defined(USE_TTY)    
-    tty_unregister_driver(naviDev_tty_driver);
+    tty_unregister_driver(moitessier_tty_driver);
 #endif /* USE_TTY */ 
 free_tty_mem:
 #if defined(USE_TTY)  
-    if(naviDev_serial)
+    if(moitessier_serial)
     {
-        kfree(naviDev_serial);
-        naviDev_serial = NULL;    
+        kfree(moitessier_serial);
+        moitessier_serial = NULL;    
 	}
 #endif /* USE_TTY */	
 free_tty:
 #if defined(USE_TTY)      
-    put_tty_driver(naviDev_tty_driver);    
+    put_tty_driver(moitessier_tty_driver);    
 #endif /* USE_TTY */ 	    
 free_class:
-    naviDev_spi_class->dev_uevent = NULL;
-    device_destroy(naviDev_spi_class, naviDev_spi_nr);
-    class_destroy(naviDev_spi_class);
+    moitessier_spi_class->dev_uevent = NULL;
+    device_destroy(moitessier_spi_class, moitessier_spi_nr);
+    class_destroy(moitessier_spi_class);
 free_cdev:
-    kobject_put(&naviDev_spi_object->kobj);
+    kobject_put(&moitessier_spi_object->kobj);
 free_device_number:
-    unregister_chrdev_region(naviDev_spi_nr, 1);
+    unregister_chrdev_region(moitessier_spi_nr, 1);
 free_mem:
     rxFifo.size = 0;
 	return -EIO;	
 }
 
-static void __exit naviDev_exit(void)
+static void __exit moitessier_exit(void)
 {
     int i = 0;
 #if defined(USE_KEEP_ALIVE)    
@@ -2242,17 +2242,17 @@ static void __exit naviDev_exit(void)
     if(DEBUG_LEVEL >= LEVEL_INFO)
         pr_info("%s\n", __func__);
     
-    for(i = 0; i < DIM(naviDev_spi->irq_gpio); i++)   
+    for(i = 0; i < DIM(moitessier_spi->irq_gpio); i++)   
 	{
-	    disable_irq(naviDev_spi->irq_gpio[i].irq);
-        free_irq(naviDev_spi->irq_gpio[i].irq, naviDev_spi);   
+	    disable_irq(moitessier_spi->irq_gpio[i].irq);
+        free_irq(moitessier_spi->irq_gpio[i].irq, moitessier_spi);   
     }
     
-    naviDev_spi->initialized = false;
-    naviDev_spi->opened = false; 
+    moitessier_spi->initialized = false;
+    moitessier_spi->opened = false; 
     info.valid = false; 
-    naviDev_serial->initialized = false;
-    naviDev_serial->opened = false;
+    moitessier_serial->initialized = false;
+    moitessier_serial->opened = false;
     
 #if defined(USE_KEEP_ALIVE)
     atomic_set(&killKeepAlive, 1);
@@ -2273,65 +2273,65 @@ static void __exit naviDev_exit(void)
     wait_for_completion(&on_exit);
     thread_id = NULL;
 #if defined(USE_TTY)    
-    naviDev_tty_class->dev_uevent = NULL;
-    naviDev_tty_class->devnode = NULL;
+    moitessier_tty_class->dev_uevent = NULL;
+    moitessier_tty_class->devnode = NULL;
 
-    tty_unregister_device(naviDev_tty_driver, 0);
-    tty_unregister_driver(naviDev_tty_driver);
-	put_tty_driver(naviDev_tty_driver); 
-	if(naviDev_serial)
+    tty_unregister_device(moitessier_tty_driver, 0);
+    tty_unregister_driver(moitessier_tty_driver);
+	put_tty_driver(moitessier_tty_driver); 
+	if(moitessier_serial)
 	{
-	    if(naviDev_serial->tty)
+	    if(moitessier_serial->tty)
 	    {
-    		if(naviDev_serial->tty->port)
+    		if(moitessier_serial->tty->port)
     		{
-    		    kfree(naviDev_serial->tty->port);
-    		    naviDev_serial->tty->port = NULL;
+    		    kfree(moitessier_serial->tty->port);
+    		    moitessier_serial->tty->port = NULL;
     		}
     	}
-		kfree(naviDev_serial);
-		naviDev_serial = NULL;
+		kfree(moitessier_serial);
+		moitessier_serial = NULL;
 	}
 #endif /* USE_TTY */     
     
-    spi_unregister_driver(&naviDev_spi_driver);
-	naviDev_spi_class->dev_uevent = NULL;
-	device_destroy(naviDev_spi_class, naviDev_spi_nr);
-	class_destroy(naviDev_spi_class);
-	cdev_del(naviDev_spi_object);
-	unregister_chrdev_region(naviDev_spi_nr, 1);
-	for(i = 0; i < DIM(naviDev_spi->req_gpio); i++)   
+    spi_unregister_driver(&moitessier_spi_driver);
+	moitessier_spi_class->dev_uevent = NULL;
+	device_destroy(moitessier_spi_class, moitessier_spi_nr);
+	class_destroy(moitessier_spi_class);
+	cdev_del(moitessier_spi_object);
+	unregister_chrdev_region(moitessier_spi_nr, 1);
+	for(i = 0; i < DIM(moitessier_spi->req_gpio); i++)   
 	{
-	    gpio_unexport(naviDev_spi->req_gpio[i].gpio);         
-        gpio_free(naviDev_spi->req_gpio[i].gpio); 
+	    gpio_unexport(moitessier_spi->req_gpio[i].gpio);         
+        gpio_free(moitessier_spi->req_gpio[i].gpio); 
     }
     
-    gpio_unexport(naviDev_spi->boot_gpio.gpio);
-    gpio_free(naviDev_spi->boot_gpio.gpio); 
+    gpio_unexport(moitessier_spi->boot_gpio.gpio);
+    gpio_free(moitessier_spi->boot_gpio.gpio); 
      
-    gpio_unexport(naviDev_spi->reset_gpio.gpio);
-    gpio_free(naviDev_spi->reset_gpio.gpio); 
+    gpio_unexport(moitessier_spi->reset_gpio.gpio);
+    gpio_free(moitessier_spi->reset_gpio.gpio); 
     
-    for(i = 0; i < DIM(naviDev_spi->irq_gpio); i++)   
+    for(i = 0; i < DIM(moitessier_spi->irq_gpio); i++)   
 	{
-	    gpio_unexport(naviDev_spi->irq_gpio[i].gpio);            
-        gpio_free(naviDev_spi->irq_gpio[i].gpio); 
+	    gpio_unexport(moitessier_spi->irq_gpio[i].gpio);            
+        gpio_free(moitessier_spi->irq_gpio[i].gpio); 
     }
     
-    kfree(naviDev_spi);
+    kfree(moitessier_spi);
     
     rxFifo.size = 0;
 
-    naviDev_ctrl_class->dev_uevent = NULL;
-	device_destroy(naviDev_ctrl_class, naviDev_ctrl_nr);
-	class_destroy(naviDev_ctrl_class);
-	cdev_del(naviDev_ctrl_object);
-	unregister_chrdev_region(naviDev_ctrl_nr, 1);
+    moitessier_ctrl_class->dev_uevent = NULL;
+	device_destroy(moitessier_ctrl_class, moitessier_ctrl_nr);
+	class_destroy(moitessier_ctrl_class);
+	cdev_del(moitessier_ctrl_object);
+	unregister_chrdev_region(moitessier_ctrl_nr, 1);
 }
 
-module_init(naviDev_init);
-module_exit(naviDev_exit);
+module_init(moitessier_init);
+module_exit(moitessier_exit);
 MODULE_AUTHOR("Thomas POMS, <hwsw.development@gmail.com>");
-MODULE_DESCRIPTION("nav.HAT Device Driver");
+MODULE_DESCRIPTION("Moitessier HAT Device Driver");
 MODULE_LICENSE("GPL");
-MODULE_ALIAS("navidev");
+MODULE_ALIAS("moitessier");
