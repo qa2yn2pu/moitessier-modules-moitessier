@@ -170,6 +170,12 @@
 #include <linux/delay.h>
 #include <stddef.h>
 
+#include <linux/version.h>
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 11, 0)
+#include <linux/signal.h>
+#include <linux/sched/signal.h>
+#endif
+
 #if defined(USE_TTY)
 #include <linux/tty.h>
 #include <linux/tty_driver.h>
