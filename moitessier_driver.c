@@ -1272,6 +1272,12 @@ void moitessier_processReqData(void)
                     
                     spin_unlock_irq(&info.spinlock);
                 }
+                
+#if defined(USE_KEEP_ALIVE)
+                spin_lock_irqsave(&timerKeepAlive_spinlock, iflags);
+                mod_timer(&timerKeepAlive, KEEP_ALIVE_TIMEOUT(KEEP_ALIVE_TIMEOUT_SHORT_MS));
+                spin_unlock_irqrestore(&timerKeepAlive_spinlock, iflags);
+#endif /* USE_KEEP_ALIVE */
             }
             
             lastHeaderPos += (HEADER_size() + header.payloadLen);
