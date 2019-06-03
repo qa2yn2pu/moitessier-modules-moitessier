@@ -470,7 +470,10 @@ static atomic_t dataAvailForUser = ATOMIC_INIT(0);
 static struct st_moitessierSpi_serial *moitessier_serial;	
 static struct class *moitessier_tty_class;
 static struct device *moitessier_tty_dev;
-#define MOITESSIER_TTY_MAJOR    240
+#define MOITESSIER_TTY_MAJOR            240
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 15, 0)
+#define MOITESSIER_TTY_MINOR_START      16
+#endif /* LINUX_VERSION_CODE */
 #endif /* USE_TTY */
 
 #if defined(USE_KEEP_ALIVE)
@@ -948,7 +951,11 @@ static void keepAlive_queueFunc(struct work_struct *work)
     moitessier_resetHAT(10);
 }
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 14, 0)  
+static void moitessier_keepAlive(struct timer_list *t)
+#else
 static void moitessier_keepAlive(unsigned long dat)
+#endif /* LINUX_VERSION_CODE */
 {
     unsigned long iflags;
     
@@ -1971,6 +1978,8 @@ static struct tty_driver *moitessier_tty_driver;
 
 static int __init moitessier_init(void)
 {
+    int rc = 0;
+    
     if(DEBUG_LEVEL >= LEVEL_INFO)
         pr_info("%s\n", __func__);
 
@@ -2056,6 +2065,11 @@ static int __init moitessier_init(void)
 	moitessier_tty_driver->driver_name = DEVICE_NAME_TTY;
 	moitessier_tty_driver->name = DEVICE_NAME_TTY;
 	moitessier_tty_driver->major = MOITESSIER_TTY_MAJOR,
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 15, 0)
+	moitessier_tty_driver->minor_start = MOITESSIER_TTY_MINOR_START,    /* if not set, there will be returned a busy error during tty_register_driver(...) */
+	                                                                    /* currently it is not sure since which kernel version this issue has occured */
+	                                                                    /* see https://devtalk.nvidia.com/default/topic/941448/problem-with-loading-module-via-modprobe/ */
+#endif /* LINUX_VERSION_CODE */	
 	moitessier_tty_driver->type = TTY_DRIVER_TYPE_SYSTEM,
 	moitessier_tty_driver->subtype = SYSTEM_TYPE_CONSOLE,
 	moitessier_tty_driver->flags = TTY_DRIVER_REAL_RAW | TTY_DRIVER_DYNAMIC_DEV | TTY_DRIVER_UNNUMBERED_NODE,
@@ -2066,10 +2080,11 @@ static int __init moitessier_init(void)
 	tty_set_operations(moitessier_tty_driver, &serial_ops);
 	
 	/* register the tty driver */
-	if(tty_register_driver(moitessier_tty_driver))
+	rc = tty_register_driver(moitessier_tty_driver);
+	if(rc)
 	{
 	    if(DEBUG_LEVEL >= LEVEL_CRITICAL || DEBUG_LEVEL == LEVEL_DEBUG_TTY)
-		    pr_err("%s - failed to register TTY driver\n", __func__);
+		    pr_err("%s - failed to register TTY driver. Error code: %d\n", __func__, rc);
 		goto free_tty_mem;
 	}
 	
@@ -2180,9 +2195,13 @@ static int __init moitessier_init(void)
     wq = create_workqueue("KEEP ALIVE");
     /* initialize a timer that is used to check communication to the Moitessier HAT */
     spin_lock_init(&timerKeepAlive_spinlock);
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 14, 0)    
+    timer_setup(&timerKeepAlive, moitessier_keepAlive, 0);
+#else
     init_timer(&timerKeepAlive);
     timerKeepAlive.function = moitessier_keepAlive;
     timerKeepAlive.data = 0;
+#endif /* LINUX_VERSION_CODE */
     timerKeepAlive.expires = KEEP_ALIVE_TIMEOUT(KEEP_ALIVE_TIMEOUT_LONG_MS);
     add_timer(&timerKeepAlive);
 #endif /* USE_KEEP_ALIVE */
@@ -2263,8 +2282,10 @@ static void __exit moitessier_exit(void)
     moitessier_spi->initialized = false;
     moitessier_spi->opened = false; 
     info.valid = false; 
+#if defined(USE_TTY)    
     moitessier_serial->initialized = false;
     moitessier_serial->opened = false;
+#endif /* USE_TTY */
     
 #if defined(USE_KEEP_ALIVE)
     atomic_set(&killKeepAlive, 1);
