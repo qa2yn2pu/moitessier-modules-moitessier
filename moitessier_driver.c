@@ -140,6 +140,8 @@
 #define USE_KEEP_ALIVE                  /* If enabled, the driver checks if a keep alive message is received from the HAT periodically.
                                            If the keep alive is missing, the driver resets the HAT. */
 
+#define SUPPORT_SHUTDOWN                                           
+
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
 ///////////// INCLUDES
@@ -169,6 +171,7 @@
 #include <linux/moduleparam.h>
 #include <linux/delay.h>
 #include <stddef.h>
+#include <linux/reboot.h>
 
 #include <linux/version.h>
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 11, 0)
@@ -364,6 +367,7 @@ struct st_info{
     struct st_info_rcv          rcv[NUM_RCV];       /* AIS receiver related information/configuration */
     struct st_simulator         simulator;          /* simulator related information/configuration */
     uint8_t                     wpEEPROM;           /* write protection of the ID EEPROM, 1...enabled, 0...disabled */
+    uint8_t                     buttonPressed;      /* button pressed, 1...pressed, 0...not pressed */
     bool        valid;                              /* true if valid, else false */
     spinlock_t  spinlock;                           /* locks this structure */
 };
@@ -485,7 +489,6 @@ static struct workqueue_struct *wq = NULL;
 static void keepAlive_queueFunc(struct work_struct *work);
 static DECLARE_WORK(work_object, keepAlive_queueFunc);
 #endif /* USE_KEEP_ALIVE */
-
 
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
@@ -1030,6 +1033,7 @@ void moitessier_processReqData(void)
     HEADER_uint8_tToAsciiHex(CMD_FIELD_NOT_USED, &moitessier_spi->txBuf[posInTxBuf + HEADER_size() + (offsetof(response_t, cmdSub) * 2)], NOT_NULL_TERMINATED);
     posPayload = sizeof(response_t) * 2; 
     spin_lock_irq(&configHAT.spinlock);
+    
     for(i = 0; i < NUM_RCV; i++)
     {
         for(k = 0; k < NUM_RCV_CHANNELS; k++)
@@ -1055,6 +1059,7 @@ void moitessier_processReqData(void)
     }
     HEADER_uint8_tToAsciiHex(configHAT.wpEEPROM, &moitessier_spi->txBuf[posInTxBuf + HEADER_size() + posPayload], NOT_NULL_TERMINATED);
     posPayload += DIM_ELEMENT(struct st_configHAT, wpEEPROM) * 2;  
+    
     spin_unlock_irq(&configHAT.spinlock);
     
     /* fill the header for the payload with default settings */
@@ -1275,6 +1280,8 @@ void moitessier_processReqData(void)
                     }
                     info.wpEEPROM = HEADER_asciiHexToUint8_t((uint8_t*)&moitessier_spi->rxBuf[headerPos + HEADER_size() + posPayload]);
                     posPayload += DIM_ELEMENT(struct st_info, wpEEPROM) * 2;
+                    info.buttonPressed = HEADER_asciiHexToUint8_t((uint8_t*)&moitessier_spi->rxBuf[headerPos + HEADER_size() + posPayload]);
+                    posPayload += DIM_ELEMENT(struct st_info, buttonPressed) * 2;
                     info.valid = true;
                     
                     spin_unlock_irq(&info.spinlock);
@@ -1432,6 +1439,8 @@ moitessier_processReqData_exit:
 
 static int moitessier_thread(void *data)
 {
+    unsigned long iflags;
+     
     allow_signal(SIGTERM);    
     
     while(kthread_should_stop() == 0)
@@ -1445,6 +1454,40 @@ static int moitessier_thread(void *data)
         SLAVE_REQ_CONFIRMED;
         
         moitessier_processReqData();
+        
+#if defined(SUPPORT_SHUTDOWN)        
+        if(info.buttonPressed)
+        {
+            if(DEBUG_LEVEL >= LEVEL_INFO)
+            {
+                pr_info("%s - Shutting down...\n", __func__);
+            
+            }    
+            /* reset the HAT microcontroller */    
+            spin_lock_irqsave(&moitessier_spi->spinlock, iflags);
+            gpio_set_value(moitessier_spi->req_gpio[0].gpio, REQ_LEVEL_INACTIVE);
+            gpio_set_value(moitessier_spi->req_gpio[1].gpio, REQ_LEVEL_INACTIVE);
+            
+            if(USE_REQ_FOR_RESET)
+            {
+                gpio_set_value(moitessier_spi->req_gpio[0].gpio, REQ_LEVEL_INACTIVE);
+                gpio_set_value(moitessier_spi->req_gpio[0].gpio, REQ_LEVEL_ACTIVE);
+                mdelay(100);
+            }
+            else
+            {
+                gpio_set_value(moitessier_spi->reset_gpio.gpio, RESET_LEVEL_INACTIVE);
+                gpio_set_value(moitessier_spi->reset_gpio.gpio, RESET_LEVEL_ACTIVE);
+            }
+            
+            gpio_set_value(moitessier_spi->req_gpio[0].gpio, REQ_LEVEL_INACTIVE);
+            gpio_set_value(moitessier_spi->req_gpio[1].gpio, REQ_LEVEL_INACTIVE);
+            
+            spin_unlock_irqrestore(&moitessier_spi->spinlock, iflags);
+            
+            kernel_power_off();
+        }
+#endif /* SUPPORT_SHUTDOWN */        
     }
     
     complete_and_exit(&on_exit, 0);
@@ -2333,6 +2376,8 @@ static void __exit moitessier_exit(void)
 	class_destroy(moitessier_spi_class);
 	cdev_del(moitessier_spi_object);
 	unregister_chrdev_region(moitessier_spi_nr, 1);
+	
+	
 	for(i = 0; i < DIM(moitessier_spi->req_gpio); i++)   
 	{
 	    gpio_unexport(moitessier_spi->req_gpio[i].gpio);         
@@ -2341,7 +2386,7 @@ static void __exit moitessier_exit(void)
     
     gpio_unexport(moitessier_spi->boot_gpio.gpio);
     gpio_free(moitessier_spi->boot_gpio.gpio); 
-     
+    
     gpio_unexport(moitessier_spi->reset_gpio.gpio);
     gpio_free(moitessier_spi->reset_gpio.gpio); 
     
