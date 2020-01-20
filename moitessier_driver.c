@@ -524,6 +524,11 @@ static ssize_t moitessier_read(struct file *filp, char __user *buf, size_t maxBy
     if(DEBUG_LEVEL >= LEVEL_DEBUG || DEBUG_LEVEL == LEVEL_DEBUG_SPI)
         pr_info("%s - max bytes to read: %d\n", __func__, maxBytesToRead);
     
+    if(!moitessier_spi)
+        return -EPERM;    
+    if(!moitessier_spi->initialized)
+        return -EPERM;
+    
     dev = filp->private_data;
     
 #if !defined(USE_TTY)
@@ -636,6 +641,11 @@ static int moitessier_open(struct inode *inode, struct file *filp)
     if(DEBUG_LEVEL >= LEVEL_DEBUG || DEBUG_LEVEL == LEVEL_DEBUG_SPI)  
 	    pr_info("%s\n", __func__);
 	
+	if(!dev)
+        return -EPERM;        
+	if(!dev->initialized)
+        return -EPERM;
+        
 	spin_lock_irq(&dev->spinlock);
 	
 	/* we can only open the device once */
@@ -721,6 +731,11 @@ static long moitessier_ctrl_ioctl(struct file *filp, unsigned int cmd, unsigned 
     if(DEBUG_LEVEL >= LEVEL_DEBUG || DEBUG_LEVEL == LEVEL_DEBUG_SPI)
         pr_info("%s - cmd: %u\n", __func__, cmd);
     
+    if(!moitessier_spi)
+        return -EPERM;
+    if(!moitessier_spi->initialized)
+        return -EPERM;
+    
     memset(dat, 0, sizeof(dat));
             
     switch(cmd)
@@ -801,7 +816,7 @@ static long moitessier_ctrl_ioctl(struct file *filp, unsigned int cmd, unsigned 
             {
                 pr_err("%s: Unknown parameter.\n", __func__);
             }
-            return -EFAULT;
+            return -EPERM;
     }
     
     return (size - rc);
@@ -1019,7 +1034,9 @@ void moitessier_processReqData(void)
     if(!moitessier_spi)
         return;
     
-    
+    if(!moitessier_spi->initialized)
+        return;
+        
     spin_lock_irq(&moitessier_spi->spinlock);
     
     /* read data from the SPI interface */
@@ -1453,41 +1470,44 @@ static int moitessier_thread(void *data)
         }
         SLAVE_REQ_CONFIRMED;
         
-        moitessier_processReqData();
+        if(moitessier_spi->initialized)
+        {
+            moitessier_processReqData();
         
 #if defined(SUPPORT_SHUTDOWN)        
-        if(info.buttonPressed)
-        {
-            if(DEBUG_LEVEL >= LEVEL_INFO)
+            if(info.buttonPressed)
             {
-                pr_info("%s - Shutting down...\n", __func__);
-            
-            }    
-            /* reset the HAT microcontroller */    
-            spin_lock_irqsave(&moitessier_spi->spinlock, iflags);
-            gpio_set_value(moitessier_spi->req_gpio[0].gpio, REQ_LEVEL_INACTIVE);
-            gpio_set_value(moitessier_spi->req_gpio[1].gpio, REQ_LEVEL_INACTIVE);
-            
-            if(USE_REQ_FOR_RESET)
-            {
+                if(DEBUG_LEVEL >= LEVEL_INFO)
+                {
+                    pr_info("%s - Shutting down...\n", __func__);
+                
+                }    
+                /* reset the HAT microcontroller */    
+                spin_lock_irqsave(&moitessier_spi->spinlock, iflags);
                 gpio_set_value(moitessier_spi->req_gpio[0].gpio, REQ_LEVEL_INACTIVE);
-                gpio_set_value(moitessier_spi->req_gpio[0].gpio, REQ_LEVEL_ACTIVE);
-                mdelay(100);
+                gpio_set_value(moitessier_spi->req_gpio[1].gpio, REQ_LEVEL_INACTIVE);
+                
+                if(USE_REQ_FOR_RESET)
+                {
+                    gpio_set_value(moitessier_spi->req_gpio[0].gpio, REQ_LEVEL_INACTIVE);
+                    gpio_set_value(moitessier_spi->req_gpio[0].gpio, REQ_LEVEL_ACTIVE);
+                    mdelay(100);
+                }
+                else
+                {
+                    gpio_set_value(moitessier_spi->reset_gpio.gpio, RESET_LEVEL_INACTIVE);
+                    gpio_set_value(moitessier_spi->reset_gpio.gpio, RESET_LEVEL_ACTIVE);
+                }
+                
+                gpio_set_value(moitessier_spi->req_gpio[0].gpio, REQ_LEVEL_INACTIVE);
+                gpio_set_value(moitessier_spi->req_gpio[1].gpio, REQ_LEVEL_INACTIVE);
+                
+                spin_unlock_irqrestore(&moitessier_spi->spinlock, iflags);
+                
+                kernel_power_off();
             }
-            else
-            {
-                gpio_set_value(moitessier_spi->reset_gpio.gpio, RESET_LEVEL_INACTIVE);
-                gpio_set_value(moitessier_spi->reset_gpio.gpio, RESET_LEVEL_ACTIVE);
-            }
-            
-            gpio_set_value(moitessier_spi->req_gpio[0].gpio, REQ_LEVEL_INACTIVE);
-            gpio_set_value(moitessier_spi->req_gpio[1].gpio, REQ_LEVEL_INACTIVE);
-            
-            spin_unlock_irqrestore(&moitessier_spi->spinlock, iflags);
-            
-            kernel_power_off();
-        }
-#endif /* SUPPORT_SHUTDOWN */        
+#endif /* SUPPORT_SHUTDOWN */   
+        }     
     }
     
     complete_and_exit(&on_exit, 0);
@@ -1572,9 +1592,15 @@ include/linux/of.h
         pr_info("%s\n", __func__);
 	  
     /* allocate driver data */
-	moitessier_spi = kzalloc(sizeof(*moitessier_spi), GFP_KERNEL);
+    /* this should have been already done in the init(...) function */
+    if (!moitessier_spi)
+	    moitessier_spi = kzalloc(sizeof(*moitessier_spi), GFP_KERNEL);
 	if (!moitessier_spi)
+    {
+        if(DEBUG_LEVEL >= LEVEL_CRITICAL || DEBUG_LEVEL == LEVEL_DEBUG_SPI)
+	        pr_err("%s - failed to allocate memory for \"%s\"\n", __func__, DEVICE_NAME_SPI);
 		return -ENOMEM;
+    }
     
     moitessier_spi->initialized = false;
     moitessier_spi->opened = false;
@@ -2030,6 +2056,17 @@ static int __init moitessier_init(void)
 	moitessier_serial = NULL;
 #endif /* USE_TTY */	
 	
+	/* Memory allocation must be done at this point. If SPI is not enabled the probe(...) function will not
+	   be called and we will get a segmentation fault later in this function when we try to access moitessier_spi. */
+	moitessier_spi = kzalloc(sizeof(*moitessier_spi), GFP_KERNEL);
+	if (!moitessier_spi)
+    {
+        if(DEBUG_LEVEL >= LEVEL_CRITICAL || DEBUG_LEVEL == LEVEL_DEBUG_SPI)
+	        pr_err("%s - failed to allocate memory for \"%s\"\n", __func__, DEVICE_NAME_SPI);
+		return -ENOMEM;
+    }
+    moitessier_spi->initialized = false;
+    	
 	rxFifo.size = FIFO_SIZE;
 	rxFifo.cnt = 0;
 	memset(rxFifo.data, 0, rxFifo.size);		
@@ -2201,7 +2238,7 @@ static int __init moitessier_init(void)
 	
 	RESET_DATA_AVAILABLE_USER;
 	SLAVE_REQ_CONFIRMED;
-	
+
     spin_lock_init(&moitessier_spi->spinlock);
     spin_lock_init(&rxFifo.spinlock);
 #if defined(USE_STATISTICS)    
@@ -2210,10 +2247,10 @@ static int __init moitessier_init(void)
     spin_lock_init(&info.spinlock);
     config.gnssEnabled = 1;     /* the GNSS is enabled by default */
     spin_lock_init(&config.spinlock);
-    
+
     memcpy(&configHAT, &configHATdefault, sizeof(struct st_configHAT));
     spin_lock_init(&configHAT.spinlock);
-   
+
 #if defined(USE_TTY)    
     mutex_init(&moitessier_serial->lock);
 #endif /* USE_TTY */    
@@ -2249,6 +2286,13 @@ static int __init moitessier_init(void)
     add_timer(&timerKeepAlive);
 #endif /* USE_KEEP_ALIVE */
 
+    if(!moitessier_spi->initialized)
+    {
+        if(DEBUG_LEVEL >= LEVEL_CRITICAL || DEBUG_LEVEL == LEVEL_DEBUG_SPI)
+        {
+            pr_err("%s - SPI seems to be disabled. Check your configuration!! SPI and I2C must be enabled to use the Moitessier HAT.\n", __func__);
+        }
+    }
     return 0;
     
     /* to avoid compiler errors */
@@ -2302,6 +2346,8 @@ free_cdev:
 free_device_number:
     unregister_chrdev_region(moitessier_spi_nr, 1);
 free_mem:
+    if(moitessier_spi)
+        kfree(moitessier_spi);
     rxFifo.size = 0;
 	return -EIO;	
 }
