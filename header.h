@@ -97,7 +97,7 @@ typedef struct
 
 #define HEADER_SOF_VAL						0x021EE110
 #define HEADER_LEN_VAL						HEADER_PAYLOAD_IDX
-#define HEADER_VERSION_VAL					1
+#define HEADER_VERSION_VAL					2
 #define HEADER_TYPE_LISTENER_TALKER_VAL		0
 #define HEADER_TYPE_CMD_VAL		            1
 #define HEADER_TARGET_ALL_VAL               0xFFFFFFFF

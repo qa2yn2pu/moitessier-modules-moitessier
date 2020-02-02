@@ -1297,8 +1297,20 @@ void moitessier_processReqData(void)
                     }
                     info.wpEEPROM = HEADER_asciiHexToUint8_t((uint8_t*)&moitessier_spi->rxBuf[headerPos + HEADER_size() + posPayload]);
                     posPayload += DIM_ELEMENT(struct st_info, wpEEPROM) * 2;
-                    info.buttonPressed = HEADER_asciiHexToUint8_t((uint8_t*)&moitessier_spi->rxBuf[headerPos + HEADER_size() + posPayload]);
-                    posPayload += DIM_ELEMENT(struct st_info, buttonPressed) * 2;
+                    
+                    info.buttonPressed = 0;
+                    /* since protocol version 2 we have an additional field in the info command */
+                    if(header.version >= 2)
+                    {
+                        info.buttonPressed = HEADER_asciiHexToUint8_t((uint8_t*)&moitessier_spi->rxBuf[headerPos + HEADER_size() + posPayload]);
+                        posPayload += DIM_ELEMENT(struct st_info, buttonPressed) * 2;
+                    }
+                    
+                    if(DEBUG_LEVEL >= LEVEL_DEBUG)
+                    {
+                        pr_info("%s: protocol version = %d\n", __func__, header.version);                    
+                    }
+                    
                     info.valid = true;
                     
                     spin_unlock_irq(&info.spinlock);
@@ -2069,7 +2081,9 @@ static int __init moitessier_init(void)
     	
 	rxFifo.size = FIFO_SIZE;
 	rxFifo.cnt = 0;
-	memset(rxFifo.data, 0, rxFifo.size);		
+	memset(rxFifo.data, 0, rxFifo.size);	
+	
+	memset(&info, 0, sizeof(struct st_info));	
 	
 	/* reserve device number */	
 	if(alloc_chrdev_region(&moitessier_spi_nr, 0, 1, DEVICE_NAME_SPI) < 0)
