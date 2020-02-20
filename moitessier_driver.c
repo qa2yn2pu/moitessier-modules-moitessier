@@ -261,9 +261,12 @@ module_param(KEEP_ALIVE_TIMEOUT_SHORT_MS, long, 0644);
 MODULE_PARM_DESC(KEEP_ALIVE_TIMEOUT_SHORT_MS, "Keep alive timeout (short value) in sec");  
 
 int USE_REQ_FOR_RESET = 0;
-module_param(USE_REQ_FOR_RESET, int, 0444);
+module_param(USE_REQ_FOR_RESET, int, 0644);
 MODULE_PARM_DESC(USE_REQ_FOR_RESET, "Set to 1, if the REQ signal should be used instead of the dedicated RESET signal to reset the HAT");  
 
+int USE_SHUTDOWN_BUTTON = 1;
+module_param(USE_SHUTDOWN_BUTTON, int, 0644);
+MODULE_PARM_DESC(USE_SHUTDOWN_BUTTON, "Set to 0, if the functionality of the shutdown button should be disabled");  
 
 /* error codes */
 #define ERR_NO                  0        
@@ -280,8 +283,18 @@ MODULE_PARM_DESC(USE_REQ_FOR_RESET, "Set to 1, if the REQ signal should be used 
 #define IOCTL_GNSS                  _IO(IOC_MAGIC,4)
 #define IOCTL_CONFIG                _IO(IOC_MAGIC,5)
 #define IOCTL_ID_EEPROM             _IO(IOC_MAGIC,6)
+#define IOCTL_GNSS_MSG_CONFIG       _IO(IOC_MAGIC,7)
 
 #define KEEP_ALIVE_TIMEOUT(x)           (jiffies + msecs_to_jiffies(x))
+
+
+#define GNSS_MSG_RMC                (1 << 0)
+#define GNSS_MSG_VTG                (1 << 1)
+#define GNSS_MSG_GGA                (1 << 2)
+#define GNSS_MSG_GSA                (1 << 3)
+#define GNSS_MSG_GSV                (1 << 4)
+#define GNSS_MSG_GLL                (1 << 5)
+#define GNSS_MSG_TXT                (1 << 6)
 
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
@@ -381,6 +394,7 @@ struct st_configHAT{
 
 struct st_config{
     uint8_t     gnssEnabled;                        /* 1...GNSS enabled, 0...disabled */
+    uint32_t    gnssMsgEnabled;                              
     spinlock_t  spinlock;
 };
 
@@ -810,7 +824,24 @@ static long moitessier_ctrl_ioctl(struct file *filp, unsigned int cmd, unsigned 
             spin_unlock_irq(&config.spinlock);
             size = sizeof(uint8_t);
             break;
-                    
+        case IOCTL_GNSS_MSG_CONFIG:
+            rc = copy_from_user(dat, (void*)arg, sizeof(uint8_t));
+            spin_lock_irq(&config.spinlock);
+            config.gnssMsgEnabled = dat[0];
+            spin_unlock_irq(&config.spinlock);
+            size = sizeof(uint8_t);
+            if(DEBUG_LEVEL >= LEVEL_WARNING)
+            {
+                pr_warn("%s - GNSS message configuration = %u\n", __func__, config.gnssMsgEnabled);
+                pr_warn("\t\tRMC: %s\n", (config.gnssMsgEnabled & GNSS_MSG_RMC) ? "enabled" : "disabled");
+                pr_warn("\t\tVTG: %s\n", (config.gnssMsgEnabled & GNSS_MSG_VTG) ? "enabled" : "disabled");
+                pr_warn("\t\tGGA: %s\n", (config.gnssMsgEnabled & GNSS_MSG_GGA) ? "enabled" : "disabled");
+                pr_warn("\t\tGSA: %s\n", (config.gnssMsgEnabled & GNSS_MSG_GSA) ? "enabled" : "disabled");
+                pr_warn("\t\tGSV: %s\n", (config.gnssMsgEnabled & GNSS_MSG_GSV) ? "enabled" : "disabled");
+                pr_warn("\t\tGLL: %s\n", (config.gnssMsgEnabled & GNSS_MSG_GLL) ? "enabled" : "disabled");   
+                pr_warn("\t\tTXT: %s\n", (config.gnssMsgEnabled & GNSS_MSG_TXT) ? "enabled" : "disabled");       
+            }
+            break;            
         default:
             if(DEBUG_LEVEL >= LEVEL_CRITICAL)
             {
@@ -1368,6 +1399,39 @@ void moitessier_processReqData(void)
             else
             {
                 processData = true;
+                
+                if(config.gnssEnabled)
+                {
+                    char talkerId[3];
+                    
+                    memcpy(talkerId, &moitessier_spi->rxBuf[headerPos + HEADER_size() + 0], sizeof(talkerId));
+                    
+                    /* verify if message is GNSS related */
+                    if(talkerId[0] == '$' && talkerId[1] == 'G' && (talkerId[2] == 'P' || talkerId[2] == 'N' || talkerId[2] == 'L'))
+                    {
+                        char sentence[3];
+                        
+                        processData = false;
+                        
+                        memcpy(sentence, &moitessier_spi->rxBuf[headerPos + HEADER_size() + sizeof(talkerId)], sizeof(sentence));
+                        
+                        /* verify if we should proceed the sentence */
+                        if(strcmp(sentence, "RMC") == 0 && (config.gnssMsgEnabled & GNSS_MSG_RMC))
+                            processData = true; 
+                        if(strcmp(sentence, "VTG") == 0 && (config.gnssMsgEnabled & GNSS_MSG_VTG))
+                            processData = true; 
+                        if(strcmp(sentence, "GGA") == 0 && (config.gnssMsgEnabled & GNSS_MSG_GGA))
+                                processData = true; 
+                        if(strcmp(sentence, "GSA") == 0 && (config.gnssMsgEnabled & GNSS_MSG_GSA))
+                            processData = true; 
+                        if(strcmp(sentence, "GSV") == 0 && (config.gnssMsgEnabled & GNSS_MSG_GSV))
+                            processData = true; 
+                        if(strcmp(sentence, "GLL") == 0 && (config.gnssMsgEnabled & GNSS_MSG_GLL))
+                            processData = true; 
+                        if(strcmp(sentence, "TXT") == 0 && (config.gnssMsgEnabled & GNSS_MSG_TXT))
+                            processData = true;                             
+                    }
+                }
             }
             spin_unlock_irq(&config.spinlock);
         }
@@ -1487,7 +1551,7 @@ static int moitessier_thread(void *data)
             moitessier_processReqData();
         
 #if defined(SUPPORT_SHUTDOWN)        
-            if(info.buttonPressed)
+            if(info.buttonPressed && USE_SHUTDOWN_BUTTON)
             {
                 if(DEBUG_LEVEL >= LEVEL_INFO)
                 {
@@ -2260,6 +2324,7 @@ static int __init moitessier_init(void)
 #endif /* USE_STATISTICS */     
     spin_lock_init(&info.spinlock);
     config.gnssEnabled = 1;     /* the GNSS is enabled by default */
+    config.gnssMsgEnabled = 0xFF; /* all GNSS NMEA sentences enabled */
     spin_lock_init(&config.spinlock);
 
     memcpy(&configHAT, &configHATdefault, sizeof(struct st_configHAT));
