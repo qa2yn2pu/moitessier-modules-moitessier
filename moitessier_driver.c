@@ -139,7 +139,6 @@
 
 #define USE_KEEP_ALIVE                  /* If enabled, the driver checks if a keep alive message is received from the HAT periodically.
                                            If the keep alive is missing, the driver resets the HAT. */
-
 #define SUPPORT_SHUTDOWN                                           
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -233,10 +232,10 @@ int DEBUG_LEVEL = LEVEL_WARNING;
 /* creates the file /sys/module/<FILE_NAME>/parameters/DEBUG_LEVEL */
 /* The parameter DEBUG_LEVEL can be written and read during runtime.
    To set the debug level for example to LEVEL_CRITICAL, execute the following command:
-   target> echo 4 > /sys/module/<FILE_NAME>/parameters/DEBUG_LEVEL
+   target> echo 10 > /sys/module/<FILE_NAME>/parameters/DEBUG_LEVEL
    
    DEBUG_LEVEL might be directly set during module loading:
-   target> insmod <FILE_NAME>.ko DEBUG_LEVEL=4 */  
+   target> insmod <FILE_NAME>.ko DEBUG_LEVEL=10 */  
 module_param(DEBUG_LEVEL, int, 0644);
 /* The description of the module parameters can be shown using modinfo <FILE_NAME>.ko */
 MODULE_PARM_DESC(DEBUG_LEVEL, "Defines the level of debugging. \
@@ -381,6 +380,16 @@ struct st_info{
     struct st_simulator         simulator;          /* simulator related information/configuration */
     uint8_t                     wpEEPROM;           /* write protection of the ID EEPROM, 1...enabled, 0...disabled */
     uint8_t                     buttonPressed;      /* button pressed, 1...pressed, 0...not pressed */
+    uint8_t                     gnssVer[32];        /**< GNSS firmware version */
+    uint8_t                     gnssSysSupported;   /**< 0...not available
+                                                         255...error occured
+                                                         
+                                                         1...GPS only
+                                                         2...GLONASS only
+                                                         4...GALILEO only
+                                                         5...GPS + GALILEO
+                                                         6...GALILEO + GLONASS
+                                                         7...GPS + GLONASS + GALILEO */
     bool        valid;                              /* true if valid, else false */
     spinlock_t  spinlock;                           /* locks this structure */
 };
@@ -1336,6 +1345,15 @@ void moitessier_processReqData(void)
                         info.buttonPressed = HEADER_asciiHexToUint8_t((uint8_t*)&moitessier_spi->rxBuf[headerPos + HEADER_size() + posPayload]);
                         posPayload += DIM_ELEMENT(struct st_info, buttonPressed) * 2;
                     }
+                    if(header.version >= 3)
+                    {
+                        memcpy(info.gnssVer, (uint8_t*)&moitessier_spi->rxBuf[headerPos + HEADER_size() + posPayload],
+                            DIM_ELEMENT(struct st_info, gnssVer));
+                        posPayload += DIM_ELEMENT(struct st_info, gnssVer);                       
+                        info.gnssSysSupported = HEADER_asciiHexToUint8_t((uint8_t*)&moitessier_spi->rxBuf[headerPos + HEADER_size() + posPayload]);
+                        posPayload += DIM_ELEMENT(struct st_info, gnssSysSupported) * 2;
+                    }
+                    
                     
                     if(DEBUG_LEVEL >= LEVEL_DEBUG)
                     {
