@@ -137,8 +137,7 @@
 #define DEVICE_NAME_TTY         "moitessier.tty"           /* the name of the device using the TTY interface --> /dev/moitessier.tty */
 #endif /* USE_TTY */
 
-#define USE_KEEP_ALIVE                  /* If enabled, the driver checks if a keep alive message is received from the HAT periodically.
-                                           If the keep alive is missing, the driver resets the HAT. */
+#define SUPPORT_KEEP_ALIVE               
 #define SUPPORT_SHUTDOWN                                           
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -230,13 +229,21 @@
 int DEBUG_LEVEL = LEVEL_WARNING;
 
 /* creates the file /sys/module/<FILE_NAME>/parameters/DEBUG_LEVEL */
-/* The parameter DEBUG_LEVEL can be written and read during runtime.
+/* The parameter DEBUG_LEVEL can be written and read during runtime. Keep in mind, that this can only be done
+   as root user.
+   target> su
+   
    To set the debug level for example to LEVEL_CRITICAL, execute the following command:
    target> echo 10 > /sys/module/<FILE_NAME>/parameters/DEBUG_LEVEL
    
    DEBUG_LEVEL might be directly set during module loading:
-   target> insmod <FILE_NAME>.ko DEBUG_LEVEL=10 */  
-module_param(DEBUG_LEVEL, int, 0644);
+   target> insmod <FILE_NAME>.ko DEBUG_LEVEL=10 
+   
+   Alternatively you could also change the parameters with sudo rights, but only if using tee.
+   target> echo 10 | sudo tee /sys/module/<FILE_NAME>/parameters/DEBUG_LEVEL
+   
+   */  
+module_param(DEBUG_LEVEL, int, 0664);
 /* The description of the module parameters can be shown using modinfo <FILE_NAME>.ko */
 MODULE_PARM_DESC(DEBUG_LEVEL, "Defines the level of debugging. \
                                \n\t\t\t14...no debug messages \
@@ -248,24 +255,38 @@ MODULE_PARM_DESC(DEBUG_LEVEL, "Defines the level of debugging. \
 /* Defines the debounce timeout for the GPIOs. This is only required, if the GPIOs are connected
    to push buttons. This is a leftover from the evaluation phase. */                              
 long DEBOUNCE_MS = 0;
-module_param(DEBOUNCE_MS, long, 0644);
+module_param(DEBOUNCE_MS, long, 0664);
 MODULE_PARM_DESC(DEBOUNCE_MS, "GPIO input debounce time in ms");  
 
 long KEEP_ALIVE_TIMEOUT_LONG_MS = 2000;
-module_param(KEEP_ALIVE_TIMEOUT_LONG_MS, long, 0644);
+module_param(KEEP_ALIVE_TIMEOUT_LONG_MS, long, 0664);
 MODULE_PARM_DESC(KEEP_ALIVE_TIMEOUT_LONG_MS, "Keep alive timeout (long value) in sec");  
 
 long KEEP_ALIVE_TIMEOUT_SHORT_MS = 4000;
-module_param(KEEP_ALIVE_TIMEOUT_SHORT_MS, long, 0644);
+module_param(KEEP_ALIVE_TIMEOUT_SHORT_MS, long, 0664);
 MODULE_PARM_DESC(KEEP_ALIVE_TIMEOUT_SHORT_MS, "Keep alive timeout (short value) in sec");  
 
 int USE_REQ_FOR_RESET = 0;
-module_param(USE_REQ_FOR_RESET, int, 0644);
+module_param(USE_REQ_FOR_RESET, int, 0664);
 MODULE_PARM_DESC(USE_REQ_FOR_RESET, "Set to 1, if the REQ signal should be used instead of the dedicated RESET signal to reset the HAT");  
 
 int USE_SHUTDOWN_BUTTON = 1;
-module_param(USE_SHUTDOWN_BUTTON, int, 0644);
+module_param(USE_SHUTDOWN_BUTTON, int, 0664);
 MODULE_PARM_DESC(USE_SHUTDOWN_BUTTON, "Set to 0, if the functionality of the shutdown button should be disabled");  
+
+int TEST_MODE_SHUTDOWN_BUTTON = 0;
+module_param(TEST_MODE_SHUTDOWN_BUTTON, int, 0664);
+MODULE_PARM_DESC(TEST_MODE_SHUTDOWN_BUTTON, "Set to 1, you want to test the shutdown button without actual shutdown.");  
+
+/* If enabled, the driver checks if a keep alive message is received from the HAT periodically.
+   If the keep alive is missing, the driver resets the HAT. */
+int USE_KEEP_ALIVE = 1;
+module_param(USE_KEEP_ALIVE, int, 0664);
+MODULE_PARM_DESC(USE_KEEP_ALIVE, "Set to 0, if keep alive messages should not be proceed. Keep in mind, that the system might fail and can not detect system hangs. Use for testing purpose only.");  
+
+long SHUTDOWN_DELAY_MS = 0;
+module_param(SHUTDOWN_DELAY_MS, long, 0664);
+MODULE_PARM_DESC(SHUTDOWN_DELAY_MS, "Delay (milliseconds) before shutting down the system, if the shutdown button is pressed");  
 
 /* error codes */
 #define ERR_NO                  0        
@@ -503,7 +524,7 @@ static struct device *moitessier_tty_dev;
 #endif /* LINUX_VERSION_CODE */
 #endif /* USE_TTY */
 
-#if defined(USE_KEEP_ALIVE)
+#if defined(SUPPORT_KEEP_ALIVE)
 static atomic_t killKeepAlive = ATOMIC_INIT(0);
 static struct timer_list timerKeepAlive;
 spinlock_t timerKeepAlive_spinlock;
@@ -511,7 +532,7 @@ static DECLARE_COMPLETION(on_exitKeepAlive);
 static struct workqueue_struct *wq = NULL;
 static void keepAlive_queueFunc(struct work_struct *work);
 static DECLARE_WORK(work_object, keepAlive_queueFunc);
-#endif /* USE_KEEP_ALIVE */
+#endif /* SUPPORT_KEEP_ALIVE */
 
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
@@ -994,9 +1015,12 @@ static int FUNC_NOT_USED moitessier_receiveSpiData(struct st_moitessierSpi *dev,
 	return status;
 }
 
-#if defined(USE_KEEP_ALIVE)
+#if defined(SUPPORT_KEEP_ALIVE)
 static void keepAlive_queueFunc(struct work_struct *work)
 {
+    if(!USE_KEEP_ALIVE)
+        return;
+        
     if(!moitessier_spi)
         return;
     
@@ -1039,13 +1063,13 @@ static void moitessier_keepAlive(unsigned long dat)
         queue_work(wq, &work_object);      
     }    
 }
-#endif /* USE_KEEP_ALIVE */
+#endif /* SUPPORT_KEEP_ALIVE */
 
 void moitessier_processReqData(void)
 {
-#if defined(USE_KEEP_ALIVE)    
+#if defined(SUPPORT_KEEP_ALIVE)    
     unsigned long iflags;
-#endif /* USE_KEEP_ALIVE */    
+#endif /* SUPPORT_KEEP_ALIVE */    
     uint32_t headerPos = 0;
     uint32_t lastHeaderPos = 0;
     header_t header;
@@ -1365,11 +1389,11 @@ void moitessier_processReqData(void)
                     spin_unlock_irq(&info.spinlock);
                 }
                 
-#if defined(USE_KEEP_ALIVE)
+#if defined(SUPPORT_KEEP_ALIVE)
                 spin_lock_irqsave(&timerKeepAlive_spinlock, iflags);
                 mod_timer(&timerKeepAlive, KEEP_ALIVE_TIMEOUT(KEEP_ALIVE_TIMEOUT_SHORT_MS));
                 spin_unlock_irqrestore(&timerKeepAlive_spinlock, iflags);
-#endif /* USE_KEEP_ALIVE */
+#endif /* SUPPORT_KEEP_ALIVE */
             }
             
             lastHeaderPos += (HEADER_size() + header.payloadLen);
@@ -1382,11 +1406,11 @@ void moitessier_processReqData(void)
         spin_unlock_irq(&statistics.spinlock);
 #endif /* USE_STATISTICS */    
 
-#if defined(USE_KEEP_ALIVE)
+#if defined(SUPPORT_KEEP_ALIVE)
         spin_lock_irqsave(&timerKeepAlive_spinlock, iflags);
         mod_timer(&timerKeepAlive, KEEP_ALIVE_TIMEOUT(KEEP_ALIVE_TIMEOUT_SHORT_MS));
         spin_unlock_irqrestore(&timerKeepAlive_spinlock, iflags);
-#endif /* USE_KEEP_ALIVE */
+#endif /* SUPPORT_KEEP_ALIVE */
         
         if(DEBUG_LEVEL >= LEVEL_DEBUG)
         {
@@ -1569,13 +1593,16 @@ static int moitessier_thread(void *data)
             moitessier_processReqData();
         
 #if defined(SUPPORT_SHUTDOWN)        
-            if(info.buttonPressed && USE_SHUTDOWN_BUTTON)
+            if(info.buttonPressed && (USE_SHUTDOWN_BUTTON || TEST_MODE_SHUTDOWN_BUTTON))
             {
-                if(DEBUG_LEVEL >= LEVEL_INFO)
+                if(DEBUG_LEVEL >= LEVEL_WARNING)
                 {
-                    pr_info("%s - Shutting down...\n", __func__);
-                
+                    pr_info("%s - Shutting down in %d msec...\n", __func__, SHUTDOWN_DELAY_MS);
                 }    
+                
+                if(SHUTDOWN_DELAY_MS)
+                    msleep(SHUTDOWN_DELAY_MS);
+                    
                 /* reset the HAT microcontroller */    
                 spin_lock_irqsave(&moitessier_spi->spinlock, iflags);
                 gpio_set_value(moitessier_spi->req_gpio[0].gpio, REQ_LEVEL_INACTIVE);
@@ -1598,7 +1625,8 @@ static int moitessier_thread(void *data)
                 
                 spin_unlock_irqrestore(&moitessier_spi->spinlock, iflags);
                 
-                kernel_power_off();
+                if(!TEST_MODE_SHUTDOWN_BUTTON)
+                    kernel_power_off();
             }
 #endif /* SUPPORT_SHUTDOWN */   
         }     
@@ -2368,7 +2396,7 @@ static int __init moitessier_init(void)
     wake_up_process(thread_id);
 #endif /* USE_THREAD */    
 
-#if defined(USE_KEEP_ALIVE)
+#if defined(SUPPORT_KEEP_ALIVE)
     wq = create_workqueue("KEEP ALIVE");
     /* initialize a timer that is used to check communication to the Moitessier HAT */
     spin_lock_init(&timerKeepAlive_spinlock);
@@ -2381,7 +2409,7 @@ static int __init moitessier_init(void)
 #endif /* LINUX_VERSION_CODE */
     timerKeepAlive.expires = KEEP_ALIVE_TIMEOUT(KEEP_ALIVE_TIMEOUT_LONG_MS);
     add_timer(&timerKeepAlive);
-#endif /* USE_KEEP_ALIVE */
+#endif /* SUPPORT_KEEP_ALIVE */
 
     if(!moitessier_spi->initialized)
     {
@@ -2452,9 +2480,9 @@ free_mem:
 static void __exit moitessier_exit(void)
 {
     int i = 0;
-#if defined(USE_KEEP_ALIVE)    
+#if defined(SUPPORT_KEEP_ALIVE)    
     unsigned long iflags;
-#endif /* USE_KEEP_ALIVE */    
+#endif /* SUPPORT_KEEP_ALIVE */    
     
     if(DEBUG_LEVEL >= LEVEL_INFO)
         pr_info("%s\n", __func__);
@@ -2473,7 +2501,7 @@ static void __exit moitessier_exit(void)
     moitessier_serial->opened = false;
 #endif /* USE_TTY */
     
-#if defined(USE_KEEP_ALIVE)
+#if defined(SUPPORT_KEEP_ALIVE)
     atomic_set(&killKeepAlive, 1);
     spin_lock_irqsave(&timerKeepAlive_spinlock, iflags);
     mod_timer(&timerKeepAlive, KEEP_ALIVE_TIMEOUT(1));
@@ -2486,7 +2514,7 @@ static void __exit moitessier_exit(void)
 	    flush_workqueue(wq);
 	    destroy_workqueue(wq);
 	}
-#endif /* USE_KEEP_ALIVE */    
+#endif /* SUPPORT_KEEP_ALIVE */    
     
     kill_pid(task_pid(thread_id), SIGTERM, 1);
     wait_for_completion(&on_exit);
