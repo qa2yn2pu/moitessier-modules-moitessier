@@ -288,6 +288,10 @@ long SHUTDOWN_DELAY_MS = 0;
 module_param(SHUTDOWN_DELAY_MS, long, 0664);
 MODULE_PARM_DESC(SHUTDOWN_DELAY_MS, "Delay (milliseconds) before shutting down the system, if the shutdown button is pressed");  
 
+int DO_SHUTDOWN = 0;
+module_param(DO_SHUTDOWN, int, 0444);
+MODULE_PARM_DESC(DO_SHUTDOWN, "If set, the Moitessier HAT requests a system shutdown.");  
+
 /* error codes */
 #define ERR_NO                  0        
 #define ERR_NO_DAT_AVAIL        1
@@ -1626,7 +1630,10 @@ static int moitessier_thread(void *data)
                 spin_unlock_irqrestore(&moitessier_spi->spinlock, iflags);
                 
                 if(!TEST_MODE_SHUTDOWN_BUTTON)
-                    kernel_power_off();
+                {
+                    DO_SHUTDOWN = 1;   
+                    //kernel_power_off(); /* we can't power off the kernel, it is not the same as sudo shutdown now */
+                }
             }
 #endif /* SUPPORT_SHUTDOWN */   
         }     
