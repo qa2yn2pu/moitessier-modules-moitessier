@@ -289,7 +289,7 @@ module_param(SHUTDOWN_DELAY_MS, long, 0664);
 MODULE_PARM_DESC(SHUTDOWN_DELAY_MS, "Delay (milliseconds) before shutting down the system, if the shutdown button is pressed");  
 
 int DO_SHUTDOWN = 0;
-module_param(DO_SHUTDOWN, int, 0444);
+module_param(DO_SHUTDOWN, int, 0664);
 MODULE_PARM_DESC(DO_SHUTDOWN, "If set, the Moitessier HAT requests a system shutdown.");  
 
 /* error codes */
@@ -1601,7 +1601,7 @@ static int moitessier_thread(void *data)
             {
                 if(DEBUG_LEVEL >= LEVEL_WARNING)
                 {
-                    pr_info("%s - Shutting down in %d msec...\n", __func__, SHUTDOWN_DELAY_MS);
+                    pr_info("%s - Shutting down in %ld msec...\n", __func__, SHUTDOWN_DELAY_MS);
                 }    
                 
                 if(SHUTDOWN_DELAY_MS)
