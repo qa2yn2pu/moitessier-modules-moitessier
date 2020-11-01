@@ -324,6 +324,7 @@ MODULE_PARM_DESC(DO_SHUTDOWN, "If set, the Moitessier HAT requests a system shut
 #define GNSS_MSG_GSV                (1 << 4)
 #define GNSS_MSG_GLL                (1 << 5)
 #define GNSS_MSG_TXT                (1 << 6)
+#define GNSS_MSG_GSV                (1 << 7)
 
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
@@ -879,6 +880,7 @@ static long moitessier_ctrl_ioctl(struct file *filp, unsigned int cmd, unsigned 
                 pr_warn("\t\tGSV: %s\n", (config.gnssMsgEnabled & GNSS_MSG_GSV) ? "enabled" : "disabled");
                 pr_warn("\t\tGLL: %s\n", (config.gnssMsgEnabled & GNSS_MSG_GLL) ? "enabled" : "disabled");   
                 pr_warn("\t\tTXT: %s\n", (config.gnssMsgEnabled & GNSS_MSG_TXT) ? "enabled" : "disabled");       
+                pr_warn("\t\tGSV: %s\n", (config.gnssMsgEnabled & GNSS_MSG_GSV) ? "enabled" : "disabled");       
             }
             break;            
         default:
@@ -1458,13 +1460,14 @@ void moitessier_processReqData(void)
                     memcpy(talkerId, &moitessier_spi->rxBuf[headerPos + HEADER_size() + 0], sizeof(talkerId));
                     
                     /* verify if message is GNSS related */
-                    if(talkerId[0] == '$' && talkerId[1] == 'G' && (talkerId[2] == 'P' || talkerId[2] == 'N' || talkerId[2] == 'L'))
+                    if(talkerId[0] == '$' && talkerId[1] == 'G' && (talkerId[2] == 'P' || talkerId[2] == 'N' || talkerId[2] == 'L' || talkerId[2] == 'A'))
                     {
-                        char sentence[3];
+                        char sentence[4];
+                        sentence[3] = 0;
                         
                         processData = false;
                         
-                        memcpy(sentence, &moitessier_spi->rxBuf[headerPos + HEADER_size() + sizeof(talkerId)], sizeof(sentence));
+                        memcpy(sentence, &moitessier_spi->rxBuf[headerPos + HEADER_size() + sizeof(talkerId)], 3);
                         
                         /* verify if we should proceed the sentence */
                         if(strcmp(sentence, "RMC") == 0 && (config.gnssMsgEnabled & GNSS_MSG_RMC))
@@ -1480,7 +1483,9 @@ void moitessier_processReqData(void)
                         if(strcmp(sentence, "GLL") == 0 && (config.gnssMsgEnabled & GNSS_MSG_GLL))
                             processData = true; 
                         if(strcmp(sentence, "TXT") == 0 && (config.gnssMsgEnabled & GNSS_MSG_TXT))
-                            processData = true;                             
+                            processData = true;  
+                        if(strcmp(sentence, "GSV") == 0 && (config.gnssMsgEnabled & GNSS_MSG_GSV))
+                            processData = true;                            
                     }
                 }
             }
