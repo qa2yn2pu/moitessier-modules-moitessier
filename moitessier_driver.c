@@ -506,8 +506,13 @@ static wait_queue_head_t        wq_read;
 static wait_queue_head_t        wq_thread;
 static struct task_struct       *thread_id;
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION_ALT(5, 9, 0)
+static void irq_tasklet(struct tasklet_struct *t);
+DECLARE_TASKLET(irq_tl, irq_tasklet);
+#else
 static void irq_tasklet(unsigned long data);
 DECLARE_TASKLET(irq_tl, irq_tasklet, 0);
+#endif /* LINUX_VERSION_CODE */
 
 static atomic_t irqOccured=ATOMIC_INIT(0);
 
@@ -1651,8 +1656,12 @@ static int moitessier_thread(void *data)
     
     complete_and_exit(&on_exit, 0);
 }
-   
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION_ALT(5, 9, 0)
+static void irq_tasklet(struct tasklet_struct *t)
+#else   
 static void irq_tasklet(unsigned long data)
+#endif /* LINUX_VERSION_CODE */
 {
     unsigned int irq = atomic_read(&irqOccured);
     unsigned int i = 0;
