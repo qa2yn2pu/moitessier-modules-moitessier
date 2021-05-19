@@ -996,7 +996,9 @@ static int moitessier_transmitSpiData(struct st_moitessierSpi *dev, char* data, 
 	transfer.len = len;
 	transfer.speed_hz = dev->speed_hz;
 	spi_message_add_tail(&transfer, &msg);
+	spin_unlock_irq(&dev->spinlock);
 	status = spi_sync(dev->spi, &msg);
+	spin_lock_irq(&dev->spinlock);
 
     if (status == 0)
 		status = msg.actual_length;
